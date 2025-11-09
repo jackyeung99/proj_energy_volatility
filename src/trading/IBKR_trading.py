@@ -1,110 +1,166 @@
-from typing import Dict, Optional
+# pip install ib-insync pandas
+
+import os
+import asyncio
+import logging
+from typing import List, Optional
+
 import pandas as pd
-from ibapi.client import *
-from ibapi.wrapper import *
-from ibapi.contract import Contract
-from ibapi.order import Order
-from ibapi.common import BarData
-import numpy as np
+from ib_insync import IB, Stock, Order, util
 
-class TradingApp(EClient, EWrapper):
+# hush chatty logs so host/IP banners don't show
+logging.getLogger("ib_insync").setLevel(logging.WARNING)
+logging.basicConfig(level=logging.WARNING)
 
+
+class TradingApp:
     def __init__(self) -> None:
-        EClient.__init__(self, self)
-        self.data: Dict[int, pd.DataFrame] = {}
-        self.nextOrderId: Optional[int] = None
-        self.end_idx = []
+        self.ib = IB()
 
-    def error(self, reqId: int, errorCode: int, errorString: str, advancedOrderReject='') -> None:
-        print(f"Error: {reqId}, {errorCode}, {errorString}")
+    # ---------- lifecycle ----------
+    async def start(self, host: str, port: int, clientid: int) -> None:
+        # connect async; ib_insync runs the reader thread for you
+        await self.ib.connectAsync(host, port, clientId=clientid)
 
-    def nextValidId(self, orderId: int) -> None:
-        super().nextValidId(orderId)
-        self.nextOrderId = orderId
+        if self.ib.isConnected():
+            print("Connected to Interactive Brokers successfully.")
+        else:
+            print("Failed to connect to Interactive Brokers.")
 
-    def parse_bar_date(self,bar_date: str) -> pd.Timestamp:
+
+    async def stop(self) -> None:
+        if self.ib.isConnected():
+            await self.ib.disconnectAsync()
+
+    # ---------- helpers ----------
+    async def _qualified_stock(self, symbol: str) -> Optional[Stock]:
+        c = Stock(symbol, "SMART", "USD")
+        try:
+            (qc,) = await self.ib.qualifyContractsAsync(c)
+            return qc
+        except Exception:
+            return None
+
+    # ---------- data ----------
+    async def fetch_one_symbol(
+        self,
+        symbol: str,
+        duration: str = "2 Y",
+        bar_size: str = "1 day",
+        what: str = "TRADES",
+        rth: bool = True,
+        max_retries: int = 3,
+    ) -> Optional[pd.DataFrame]:
         """
-        Parse IBKR bar.date into pandas Timestamp.
-        Handles intraday ('YYYYMMDD HH:MM:SS') and daily ('YYYYMMDD') formats.
+        Daily bars for one US stock.
+        Returns: DataFrame[date, Symbol, open, high, low, close, volume] or None
         """
-        if len(bar_date) == 8:  # daily bars
-            return pd.to_datetime(bar_date, format="%Y%m%d")
-        else:  # intraday bars
-            return pd.to_datetime(bar_date, format="%Y%m%d %H:%M:%S %Z")
+        qc = await self._qualified_stock(symbol)
+        if qc is None:
+            return None
 
-    def get_historical_data(self, reqId: int, contract: Contract, endDateTime,durationStr,barSizeSetting,whatToShow,useRTH,formatDate,keepUpToDate) -> pd.DataFrame:
+        for attempt in range(max_retries):
+            try:
+                bars = await self.ib.reqHistoricalDataAsync(
+                    qc,
+                    endDateTime="",
+                    durationStr=duration,
+                    barSizeSetting=bar_size,
+                    whatToShow=what,
+                    useRTH=rth,
+                    formatDate=1,
+                    keepUpToDate=False,
+                )
+                if not bars:
+                    return None
+                df = util.df(bars)
+                df = df.rename(columns=str.lower)
+                df["symbol"] = symbol
+                df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+                df = df[["date", "symbol", "open", "high", "low", "close", "volume"]].dropna()
+                # Align with your original column casing if you prefer:
+                df = df.rename(columns={"symbol": "Symbol"})
+                return df
+            except Exception:
+                if attempt + 1 == max_retries:
+                    return None
+                # backoff to respect pacing (354) & transient hiccups
+                await asyncio.sleep(1 + 2 * attempt)
 
-        self.data[reqId] = pd.DataFrame(columns=["time", "high", "low", "close","volume"])
-        self.data[reqId].set_index("time", inplace=True)
-        self.reqHistoricalData(
-            reqId=reqId,
-            contract=contract,
-            endDateTime=endDateTime,
-            durationStr=durationStr,
-            barSizeSetting=barSizeSetting,
-            whatToShow=whatToShow,
-            useRTH=useRTH,
-            formatDate=formatDate,
-            keepUpToDate=keepUpToDate,
-            chartOptions=[],
+        return None
+
+    async def fetch_many_symbols(
+        self,
+        symbols: List[str],
+        duration: str = "2 Y",
+        bar_size: str = "1 day",
+        what: str = "TRADES",
+        rth: bool = True,
+        concurrency: int = 5,
+        max_retries: int = 3,
+    ) -> pd.DataFrame:
+        """
+        Concurrency-limited fetch across many symbols.
+        Returns: long DataFrame[date, Symbol, open, high, low, close, volume]
+        """
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _guarded(sym: str):
+            async with sem:
+                return await self.fetch_one_symbol(
+                    sym, duration, bar_size, what, rth, max_retries
+                )
+
+        results = await asyncio.gather(*(_guarded(s) for s in symbols))
+        dfs = [df for df in results if df is not None and not df.empty]
+        if not dfs:
+            return pd.DataFrame(columns=["date", "Symbol", "open", "high", "low", "close", "volume"])
+        return pd.concat(dfs, ignore_index=True)
+
+    # ---------- orders ----------
+    async def place_order(
+        self,
+        symbol: str,
+        action: str,
+        quantity: int,
+        order_type: str = "MKT",
+        **kwargs,
+    ) -> Optional[int]:
+        """
+        Places a basic order (default Market). Returns orderId (int) or None on failure.
+        """
+        qc = await self._qualified_stock(symbol)
+        if qc is None:
+            return None
+
+        o = Order(
+            action=action,
+            totalQuantity=quantity,
+            orderType=order_type,
+            **kwargs,
         )
-        return self.data
-    
+        trade = self.ib.placeOrder(qc, o)
+        # wait until the order is acknowledged or filled
+        try:
+            await trade.orderStatusEvent  # lightweight await
+        except Exception:
+            pass
+        return trade.order.orderId
 
-    def historicalData(self, reqId: int, bar: BarData) -> None:
-        print("HistoricalData. ReqId:", reqId, "date.", bar.date)
-        # date = pd.to_datetime(datetime.datetime.fromtimestamp(int(bar.date)).strftime('%Y-%m-%d %H:%M:%S'))
-        date = self.parse_bar_date(bar.date)
-        self.data[reqId].loc[
-            date,
-            ["open", "high", "low", "close","volume"]
-        ] = [bar.open, bar.high, bar.low, bar.close, bar.volume]
 
-        self.data[reqId].loc[date,["open", "high", "low", "close"]] = self.data[reqId].loc[date,["open", "high", "low", "close"]].astype(float)
-        self.data[reqId].loc[date,"volume"] = int(self.data[reqId].loc[date,"volume"])
-        
-
-    def historicalDataUpdate(self, reqId: int, bar: BarData) -> None:
-        print("HistoricalDataUpdate. ReqId:", reqId, "date.", bar.date)
-        # date = pd.to_datetime(datetime.datetime.fromtimestamp(int(bar.date)).strftime('%Y-%m-%d %H:%M:%S'))
-        date = self.parse_bar_date(bar.date)
-        self.data[reqId].loc[
-            date,
-            ["open", "high", "low", "close","volume"]
-        ] = [bar.open, bar.high, bar.low, bar.close, bar.volume]
-
-        self.data[reqId].loc[date,["open", "high", "low", "close"]] = self.data[reqId].loc[date,["open", "high", "low", "close"]].astype(float)
-        self.data[reqId].loc[date,"volume"] = int(self.data[reqId].loc[date,"volume"])
-
-    def historicalDataEnd(self, reqId: int, start: str, end: str):
-        print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
-        # self.data = self.data_update
-        self.end_idx.append(reqId)
-        print("Finished")
-
-    @staticmethod
-    def get_contract(symbol: str) -> Contract:
-
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = "STK"
-        contract.exchange = "SMART"
-        contract.currency = "USD"
-        return contract
-
-    def place_order(self, contract: Contract, action: str, order_type: str, quantity: int) -> None:
-
-        order = Order()
-        order.action = action
-        order.orderType = order_type
-        order.totalQuantity = quantity
-
-        self.placeOrder(self.nextOrderId, contract, order)
-        self.nextOrderId += 1
-
-    def execDetails(self, reqId: int, contract: Contract, execution: Execution):
-        self.execution = execution
-        print("Order placed")
-        return self.execution
-    
-
+# ------------------- usage example -------------------
+# async def main():
+#     app = TradingAppInsync()
+#     await app.start(host=os.getenv("IB_HOST", "127.0.0.1"),
+#                     port=int(os.getenv("IB_PORT", "7497")),
+#                     client_id=int(os.getenv("IB_CLIENT_ID", "7")))
+#
+#     df = await app.fetch_many_symbols(["AAPL", "MSFT", "GOOG"], duration="2 Y", bar_size="1 day", concurrency=5)
+#     print(df.tail())
+#
+#     order_id = await app.place_order("AAPL", action="BUY", quantity=1, order_type="MKT")
+#     print("Placed order id:", order_id)
+#
+#     await app.stop()
+#
+# asyncio.run(main())
