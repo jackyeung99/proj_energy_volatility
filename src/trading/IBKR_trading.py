@@ -147,20 +147,3 @@ class TradingApp:
             pass
         return trade.order.orderId
 
-
-# ------------------- usage example -------------------
-# async def main():
-#     app = TradingAppInsync()
-#     await app.start(host=os.getenv("IB_HOST", "127.0.0.1"),
-#                     port=int(os.getenv("IB_PORT", "7497")),
-#                     client_id=int(os.getenv("IB_CLIENT_ID", "7")))
-#
-#     df = await app.fetch_many_symbols(["AAPL", "MSFT", "GOOG"], duration="2 Y", bar_size="1 day", concurrency=5)
-#     print(df.tail())
-#
-#     order_id = await app.place_order("AAPL", action="BUY", quantity=1, order_type="MKT")
-#     print("Placed order id:", order_id)
-#
-#     await app.stop()
-#
-# asyncio.run(main())
