@@ -18,9 +18,9 @@ class TradingApp:
         self.ib = IB()
 
     # ---------- lifecycle ----------
-    async def start(self, host: str, port: int, clientid: int) -> None:
+    async def start(self, host: str, port: int, clientId: int) -> None:
         # connect async; ib_insync runs the reader thread for you
-        await self.ib.connectAsync(host, port, clientId=clientid)
+        await self.ib.connectAsync(host, port, clientId=clientId)
 
         if self.ib.isConnected():
             print("Connected to Interactive Brokers successfully.")
