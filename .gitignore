@@ -2,3 +2,7 @@
 .env
 notebooks/.cache.sqlite
 __pycache__
+
+build/
+dist/
+*.egg-info/
