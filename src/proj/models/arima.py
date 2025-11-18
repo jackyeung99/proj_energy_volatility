@@ -24,14 +24,14 @@ class ARIMA_RV_Model:
 
         self._res = self._model.fit()
 
-    def predict(self, horizon, X_future=None):
+    def predict(self, horizon, X_test=None):
         """
         horizon : int, number of steps ahead
-        X_future : exogenous regressors for forecast period
+        X_test : exogenous regressors for forecast period
         """
-        if X_future is None:
+        if X_test is None:
             forecast = self._res.forecast(steps=horizon)
         else:
-            forecast = self._res.forecast(steps=horizon, exog=X_future)
+            forecast = self._res.forecast(steps=horizon, exog=X_test)
 
         return np.asarray(forecast)
