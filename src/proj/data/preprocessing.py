@@ -8,3 +8,4 @@ def clean_stock_df(df):
 
 def clean_macro_series(df):
     return df.reset_index(drop=True)
+
