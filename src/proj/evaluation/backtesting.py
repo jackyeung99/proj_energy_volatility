@@ -11,10 +11,14 @@ def rolling_forecast_backtest(
     X=None,
     train_size=.8,
     horizon=1,
+    model_init_kwargs=None,  
 ):
     y = np.asarray(y)
     if X is not None:
         X = np.asarray(X)
+
+    if model_init_kwargs is None:
+        model_init_kwargs = {}
 
     n = len(y)
     initial_train_size = int(n * train_size)
@@ -43,7 +47,8 @@ def rolling_forecast_backtest(
         else:
             X_train = X_test = None
 
-        model = model_cls(**model_params)
+        all_init_kwargs = {**model_init_kwargs, **model_params}
+        model = model_cls(**all_init_kwargs)
         model.fit(y_train, X_train)
 
         # # For sklearn-style regressors, we usually just predict on X_test
@@ -71,24 +76,22 @@ def rolling_forecast_backtest(
 
 def ts_cv_score(
     model_cls,
-    model_params,
+    params,
     y,
     X=None,
     train_size=.8,
-    horizon=1, 
+    horizon=1,
+    model_init_kwargs=None,  
 ):
-    """
-    Returns average CV score (lower is better).
-    """
     y = np.asarray(y)
     if X is not None:
         X = np.asarray(X)
 
+    if model_init_kwargs is None:
+        model_init_kwargs = {}
+
     n = len(y)
     initial_train_size = int(n * train_size)
-
-    # How many splits? Make each test fold length = horizon
-    # and ensure the first training fold is at least initial_train_size
     n_splits = (n - initial_train_size) // horizon
 
     tscv = TimeSeriesSplit(
@@ -96,14 +99,17 @@ def ts_cv_score(
         test_size=horizon,
     )
 
-    preds = []
-    trues = []
+    preds, trues = [], []
+
     for train_idx, val_idx in tscv.split(y):
         y_train, y_val = y[train_idx], y[val_idx]
         X_train = X[train_idx] if X is not None else None
         X_val   = X[val_idx]   if X is not None else None
 
-        model = model_cls(**model_params)
+        # merge fixed init kwargs + hyperparams
+        all_init_kwargs = {**model_init_kwargs, **params}
+
+        model = model_cls(**all_init_kwargs)
         model.fit(y_train, X_train)
         y_pred = model.predict(horizon=len(val_idx), X_test=X_val)
 
@@ -116,7 +122,8 @@ def ts_cv_score(
     return qlike(trues, preds)
 
 
-def ts_hyperparam_search(
+
+def ts_hyperparam_search_full(
     model_cls,
     y,
     X=None,
@@ -124,45 +131,12 @@ def ts_hyperparam_search(
     train_size=0.8,
     horizon=1,
     verbose=True,
+    model_init_kwargs=None,  # NEW
 ):
-    """
-    Generic time-series hyperparameter search using ts_cv_score.
-    
-    Parameters
-    ----------
-    model_cls : class
-        Class of the model, e.g. XGBRVModel or GARCHRegressor.
-    y : array-like
-        Target series.
-    X : array-like or None
-        Feature matrix (optional).
-    param_grid : dict
-        Dictionary of parameter lists, e.g.
-        {
-            "max_depth": [3, 4],
-            "learning_rate": [0.05, 0.1],
-            "n_estimators": [200, 500],
-        }
-    train_size : float
-        Fraction of data used in the initial training window.
-    horizon : int
-        Forecast horizon per fold.
-    verbose : bool
-        If True, print progress.
-
-    Returns
-    -------
-    best_params : dict
-        Parameter combination with lowest CV score.
-    best_score : float
-        Corresponding score.
-    scores : list of (params, score)
-        All tried combos and their scores.
-    """
-    if param_grid is None or len(param_grid) == 0:
+    if not param_grid:
         raise ValueError("param_grid must be a non-empty dict of parameter lists.")
 
-    # build all combinations from the grid
+    # Build all combinations
     keys = list(param_grid.keys())
     values = [param_grid[k] for k in keys]
     combos = [dict(zip(keys, v)) for v in product(*values)]
@@ -174,11 +148,12 @@ def ts_hyperparam_search(
     for i, params in enumerate(combos, start=1):
         score = ts_cv_score(
             model_cls=model_cls,
-            model_params=params,
+            params=params,
             y=y,
             X=X,
             train_size=train_size,
             horizon=horizon,
+            model_init_kwargs=model_init_kwargs,
         )
         scores.append((params, score))
 
@@ -194,6 +169,95 @@ def ts_hyperparam_search(
         print("Best CV score:", best_score)
 
     return best_params, best_score, scores
+
+
+def ts_hyperparam_search( 
+    model_cls,
+    y,
+    X=None,
+    param_grid=None,
+    train_size=0.8,
+    horizon=1,
+    verbose=True,
+    model_init_kwargs=None,
+):
+
+    if not param_grid:
+        raise ValueError("param_grid must be a non-empty dict of parameter lists.")
+
+    if model_init_kwargs is None:
+        model_init_kwargs = {}
+
+    keys = list(param_grid.keys())
+
+
+    current_params = {k: param_grid[k][0] for k in keys}
+    scores = []
+
+    best_score = ts_cv_score(
+        model_cls=model_cls,
+        params=current_params,
+        y=y,
+        X=X,
+        train_size=train_size,
+        horizon=horizon,
+        model_init_kwargs=model_init_kwargs,
+    )
+    scores.append((current_params.copy(), best_score))
+
+    if verbose:
+        print("Initial params:", current_params, "score:", best_score)
+
+    eval_counter = 1
+
+    # 2) Coordinate-wise search: optimize each param one at a time
+    for k in keys:
+        if verbose:
+            print(f"\nOptimizing parameter: {k}")
+
+        local_best_score = best_score
+        local_best_value = current_params[k]
+
+        for v in param_grid[k]:
+            # If this value is the same as current and we already evaluated it,
+            # we can skip or re-evaluate. Here we skip to avoid duplicate work.
+            if v == current_params[k] and local_best_score == best_score:
+                continue
+
+            trial_params = current_params.copy()
+            trial_params[k] = v
+
+            score = ts_cv_score(
+                model_cls=model_cls,
+                params=trial_params,
+                y=y,
+                X=X,
+                train_size=train_size,
+                horizon=horizon,
+                model_init_kwargs=model_init_kwargs,
+            )
+            scores.append((trial_params.copy(), score))
+            eval_counter += 1
+
+            if verbose:
+                print(f"  tried {k}={v}, score={score:.6f}")
+
+            if score < local_best_score:
+                local_best_score = score
+                local_best_value = v
+
+        # Update current params with the best value found for k
+        current_params[k] = local_best_value
+        best_score = local_best_score
+
+        if verbose:
+            print(f"Best {k} after sweep: {local_best_value}, score={best_score:.6f}")
+
+    if verbose:
+        print("\nFinal best params:", current_params)
+        print("Final best CV score:", best_score)
+
+    return current_params, best_score, scores
 
 
 def evaluate_performance(results):
