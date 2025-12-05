@@ -42,7 +42,16 @@ def greedy_feature_selection(model, model_params, X, y, feature_lim=3):
     base_metrics = evaluate_performance(base_results)
     current_qlike = base_metrics['qlike']
 
+    history.append({
+            'step': 0,
+            'added_feature': 'base',
+            'qlike': current_qlike
+        })
+    
     print(f"Initial qlike (no features): {current_qlike}")
+
+    if not feature_lim:
+        feature_lim = len(X)
 
     for step in range(feature_lim):
         best_col = None
