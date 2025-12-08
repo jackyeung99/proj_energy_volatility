@@ -21,25 +21,26 @@ def rmse(y_true, y_pred):
 
     return rmse
 
-    
-def qlike(y_true, y_pred):
+
+def log_loss(var_true, var_pred):
+    ratio = var_true / var_pred
+    return np.mean()
+
+
+def qlike(var_true, var_pred):
     """
-    QLIKE loss for volatility forecasting.
-
-    y_true : array-like 
-        Realized volatility OR realized variance.
-        If volatility, it will automatically be squared.
-    y_pred : array-like
-        Forecast volatility OR forecast variance.
-        If volatility, it will automatically be squared.
+    QLIKE loss for variance forecasts.
+    Inputs MUST be variances, not volatilities.
     """
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
+    var_true = np.asarray(var_true, dtype=float)
+    var_pred = np.asarray(var_pred, dtype=float)
 
-    true_var = y_true**2
-    pred_var = y_pred**2
+    if np.any(var_true < 0):
+        raise ValueError("var_true must be nonnegative.")
+    if np.any(var_pred <= 0):
+        raise ValueError("var_pred must be strictly positive.")
 
-    ratio = true_var / pred_var
+    ratio = var_true / var_pred
     return np.mean(ratio - np.log(ratio) - 1)
 
 

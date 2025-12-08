@@ -40,12 +40,12 @@ def realized_var(time_series, window: int = 21, annualize: bool = False) -> pd.D
     """Compute rolling standard deviation of daily returns (realized volatility)."""
     
     time_series = time_series.copy()
-    volatility = time_series.rolling(window).std()
+    volatility = time_series.rolling(window).var()
     
     if annualize:
         volatility *= np.sqrt(256)
     
-    return volatility ** 2
+    return volatility
 
 
 
