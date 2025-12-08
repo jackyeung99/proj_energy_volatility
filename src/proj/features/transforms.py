@@ -24,7 +24,7 @@ def log_returns(df, column):
     return r
 
 
-def realized_vol(time_series, window: int = 21, annualize: bool = True) -> pd.DataFrame:
+def realized_vol(time_series, window: int = 21, annualize: bool = False) -> pd.DataFrame:
     """Compute rolling standard deviation of daily returns (realized volatility)."""
     
     time_series = time_series.copy()
@@ -36,6 +36,19 @@ def realized_vol(time_series, window: int = 21, annualize: bool = True) -> pd.Da
     return volatility 
 
 
+def realized_var(time_series, window: int = 21, annualize: bool = False) -> pd.DataFrame:
+    """Compute rolling standard deviation of daily returns (realized volatility)."""
+    
+    time_series = time_series.copy()
+    volatility = time_series.rolling(window).std()
+    
+    if annualize:
+        volatility *= np.sqrt(256)
+    
+    return volatility ** 2
+
+
+
 
 def enforce_stationarity(X, max_differencing = 4, threshold = .05):
 
@@ -44,24 +57,40 @@ def enforce_stationarity(X, max_differencing = 4, threshold = .05):
     '''
     stationary_df = pd.DataFrame()
 
+    stationary_df = pd.DataFrame(index=X.index)
+
     for col in X.columns:
         time_series = X[col].copy()
-        d = 0  
-        
-        # Try differencing up to max_differencing times
-        while d < max_differencing:
-       
-            adf, p_val, lag, nobs, cv, _ = adfuller(time_series.dropna())
 
-            # If stationary: stop differencing
-            if p_val < threshold:
+        # Drop NaNs for checks
+        ts_nonan = time_series.dropna()
+
+        # 1) If too few observations or constant -> skip this column
+        if  ts_nonan.nunique() <= 1:
+            # Option A: drop column silently
+            # print(f"Skipping column {col}: constant or too few observations.")
+            continue
+
+        d = 0
+
+        while d < max_differencing:
+            ts_nonan = time_series.dropna()
+
+            try:
+                adf, p_val, lag, nobs, cv, _ = adfuller(ts_nonan)
+            except ValueError:
+                # Catch any weird cases (e.g., still constant)
                 break
 
+            if p_val < threshold:
+                # Stationary -> stop differencing
+                break
+
+            # Otherwise, difference and try again
             time_series = time_series.diff()
             d += 1
 
         col_name = f"{col}_d{d}"
-        stationary_df[col_name] = time_series.fillna(0)
-
+        stationary_df[col_name] = time_series  # keep NaNs; drop later in pipeline
 
     return stationary_df
