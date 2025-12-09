@@ -59,6 +59,9 @@ class GARCHRegressor(BaseEstimator, RegressorMixin):
             else:
                 params["mean"] = "AR"
 
+
+    
+
         if X_train is not None:
             X_train = np.asarray(X_train)
             am = arch_model(
@@ -75,41 +78,36 @@ class GARCHRegressor(BaseEstimator, RegressorMixin):
             )
 
         self._res = am.fit(disp="off")
-        return self
+        return self._res
 
-    def predict(self, horizon=1, X_test=None):
-        """
-        Forecast variance over `horizon` steps ahead.
-        If the model was fit with exogenous variables, X_test must be provided
-        with shape (horizon, n_exog).
-        """
+    def summary(self,):
+
+        return self.summary()
+
+    def predict(self, X_test=None):
         if self._res is None:
             raise RuntimeError("Call fit() before predict().")
 
         if X_test is not None:
             X_test = np.asarray(X_test)
-
-            # Allow 1D (single regressor, horizon=1) or 2D
+            # single 1-step forecast
             if X_test.ndim == 1:
                 X_test = X_test.reshape(1, -1)
-
-            if X_test.shape[0] != horizon:
-                raise ValueError(
-                    f"X_test has {X_test.shape[0]} rows but horizon={horizon}. "
-                    "Expected X_test.shape[0] == horizon."
-                )
-
-            horizon_ = horizon
+            if X_test.shape[0] != 1:
+                raise ValueError("With exogenous regressors, only 1-step forecasts are supported.")
             n_exog = X_test.shape[1]
 
-            # Build 3D array: (n_exog, 1, horizon)
-            x_3d = np.empty((n_exog, 1, horizon_), dtype=float)
+            x_3d = np.empty((n_exog, 1, 1), dtype=float)
             for j in range(n_exog):
-                x_3d[j, 0, :] = X_test[:, j]
+                x_3d[j, 0, 0] = X_test[0, j]
 
-            f = self._res.forecast(horizon=horizon_, x=x_3d)
+            f = self._res.forecast(horizon=1, x=x_3d)
         else:
-            f = self._res.forecast(horizon=horizon)
+            f = self._res.forecast(horizon=1)
 
-        # last row: out-of-sample forecasts
-        return f.variance.values[-1, :]
+
+        # last row, 1-step ahead variance
+        return float(f.variance.values[-1, 0])
+
+
+

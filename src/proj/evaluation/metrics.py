@@ -32,8 +32,8 @@ def qlike(var_true, var_pred):
     QLIKE loss for variance forecasts.
     Inputs MUST be variances, not volatilities.
     """
-    var_true = np.asarray(var_true, dtype=float)
-    var_pred = np.asarray(var_pred, dtype=float)
+    var_true = np.sqrt(np.asarray(var_true, dtype=float))
+    var_pred = np.sqrt(np.asarray(var_pred, dtype=float))
 
     if np.any(var_true < 0):
         raise ValueError("var_true must be nonnegative.")

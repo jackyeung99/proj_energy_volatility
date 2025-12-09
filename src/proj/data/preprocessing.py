@@ -33,15 +33,15 @@ def preprocess_for_vol_prediction(df, exog_cols, target_cols, lag=1):
 
     # 5) Scale only the exogenous columns (the stationarity-enforced, lagged ones)
     exog_processed_cols = X_lagged.columns  
-    scaler = StandardScaler()
+    # scaler = StandardScaler()
     
-    X_scaled = scaler.fit_transform(combined[exog_processed_cols])
-    X = pd.DataFrame(X_scaled,
-                     index=combined.index,
-                     columns=exog_processed_cols)
+    # X_scaled = scaler.fit_transform(combined[exog_processed_cols])
+    # X = pd.DataFrame(X_scaled,
+    #                  index=combined.index,
+    #                  columns=exog_processed_cols)
 
     X = combined[exog_processed_cols]
     
     y = combined[target_cols]
 
-    return X, y, scaler
+    return X, y

@@ -22,7 +22,7 @@ def rolling_forecast_backtest(
 
     n = len(y)
     initial_train_size = int(n * train_size)
-
+    horizon = 1
     # How many splits? Make each test fold length = horizon
     # and ensure the first training fold is at least initial_train_size
     n_splits = (n - initial_train_size) // horizon
@@ -58,20 +58,53 @@ def rolling_forecast_backtest(
         #     # for your custom interface
         #     y_pred = model.predict(horizon=len(test_idx), X_future=X_test)
 
-        y_pred = model.predict(horizon=len(test_idx), X_test=X_test)
+        y_pred = model.predict( X_test=X_test)
 
         preds.append(y_pred)
         trues.append(y_test)
 
         split_idx += 1
 
-    preds = np.concatenate(preds)
-    trues = np.concatenate(trues)
 
     return {
         "y_true": trues,
         "y_pred": preds,
     }
+
+def model_summary(
+    returns,
+    y_target,
+    X=None,
+    model_params=None,
+    model_cls=None
+):
+    """
+    Fits a GARCH model (via your GARCHRegressor wrapper)
+    on the full dataset and prints the underlying arch_model summary.
+    """
+
+    if model_params is None:
+        model_params = {}
+
+    returns_arr = np.asarray(returns)
+
+    if X is not None:
+        X_arr = np.asarray(X)
+    else:
+        X_arr = None
+
+    # GARCHRegressor expects returns at init, params in kwargs
+    model = model_cls(returns=returns_arr, **model_params)
+
+    # Fit on full data
+    model.fit(y_train=np.asarray(y_target), X_train=X_arr)
+
+    # The underlying arch_model results:
+    arch_res = model._res
+
+    return model, arch_res
+
+
 
 
 def ts_cv_score(
@@ -111,13 +144,10 @@ def ts_cv_score(
 
         model = model_cls(**all_init_kwargs)
         model.fit(y_train, X_train)
-        y_pred = model.predict(horizon=len(val_idx), X_test=X_val)
+        y_pred = model.predict( X_test=X_val)
 
         preds.append(y_pred)
         trues.append(y_val)
-
-    preds = np.concatenate(preds)
-    trues = np.concatenate(trues)
 
     return qlike(trues, preds)
 
@@ -177,7 +207,6 @@ def ts_hyperparam_search(
     X=None,
     param_grid=None,
     train_size=0.8,
-    horizon=1,
     verbose=True,
     model_init_kwargs=None,
 ):
@@ -193,6 +222,7 @@ def ts_hyperparam_search(
 
     current_params = {k: param_grid[k][0] for k in keys}
     scores = []
+    horizon = 1
 
     best_score = ts_cv_score(
         model_cls=model_cls,
