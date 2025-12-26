@@ -1,8 +1,8 @@
 from pandas_datareader import data as pdr
 
-def fetch_fred_series(features, start, end):
 
-    
+def fetch(features, start, end):
+
     fred = pdr.DataReader(
         features,
         "fred",
@@ -11,4 +11,16 @@ def fetch_fred_series(features, start, end):
     ).astype(float).reset_index()
 
     return fred.ffill()
+
+
+def standardize(df):
+
+    return None 
+
+
+def validate(df):
+
+    return None
+
+
 

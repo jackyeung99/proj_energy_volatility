@@ -1,5 +1,5 @@
 from proj.trading.session import IBKRSession
-from proj.data.fred import fetch_fred_series
+from proj.data.sources.fred import fetch_fred_series
 from typing import List
 from proj.data.preprocessing import clean_stock_df, clean_macro_series
 
@@ -33,3 +33,18 @@ async def load_ibkr_prices(
 def load_macro_series(series: str, start: str, end: str):
     df = fetch_fred_series(series, start, end)
     return clean_macro_series(df)
+
+
+
+def fetch(features, start, end):
+
+    return None
+
+
+def standardize(df):
+
+    return None
+
+def validate(df):
+
+    return None
