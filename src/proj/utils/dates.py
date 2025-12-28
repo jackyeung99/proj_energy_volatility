@@ -1,6 +1,7 @@
 # src/proj/utils/dates.py
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
+import pandas as pd
 
 def duration_to_dates(duration: str, end=None):
     """
@@ -29,3 +30,23 @@ def duration_to_dates(duration: str, end=None):
         raise ValueError(f"Unsupported duration unit: {unit}")
 
     return start_dt.date(), end_dt.date()
+
+
+
+def chunk_dates(duration, chunk_size):
+    """
+    Split a date range into smaller contiguous chunks.
+    """
+    start, end = map(pd.to_datetime, duration)
+
+    chunks = []
+    current = start
+
+    while current <= end:
+        chunk_end = min(current + timedelta(days=chunk_size - 1), end)
+        chunks.append((current, chunk_end))
+        current = chunk_end + timedelta(days=1)
+
+    return chunks
+
+

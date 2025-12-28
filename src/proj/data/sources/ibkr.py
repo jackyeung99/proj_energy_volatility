@@ -34,17 +34,3 @@ def load_macro_series(series: str, start: str, end: str):
     df = fetch_fred_series(series, start, end)
     return clean_macro_series(df)
 
-
-
-def fetch(features, start, end):
-
-    return None
-
-
-def standardize(df):
-
-    return None
-
-def validate(df):
-
-    return None

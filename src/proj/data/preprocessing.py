@@ -11,6 +11,13 @@ def clean_stock_df(df):
 def clean_macro_series(df):
     return df.reset_index(drop=True)
 
+def long_to_wide(df, pivot_by='close'):
+
+    wide = df.pivot(index='date', columns='Symbol', values=pivot_by)
+    wide = wide.reset_index()  
+    wide.columns.name = None
+
+    return wide
 
 def preprocess_for_vol_prediction(df, exog_cols, target_cols, lag=1):
     """
