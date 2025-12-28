@@ -1,77 +1,96 @@
-
 import pandas as pd
-
-import openmeteo_requests
-import requests_cache
-from retry_requests import retry
 import requests
-from requests.exceptions import RequestException
-import time
-import os
-
-import pandas as pd
-import matplotlib.pyplot as plt
-
-
-DAILY_VAR = ["daylight_duration", "sunshine_duration", "uv_index_max", "uv_index_clear_sky_max", "rain_sum", "showers_sum", "snowfall_sum", "precipitation_hours", "shortwave_radiation_sum", "et0_fao_evapotranspiration", "temperature_2m_mean", "cape_mean", "dew_point_2m_mean", "cloud_cover_mean", "leaf_wetness_probability_mean", "precipitation_probability_mean", "precipitation_sum", "relative_humidity_2m_mean", "pressure_msl_mean", "surface_pressure_mean", "wind_gusts_10m_mean", "wind_speed_10m_mean", "apparent_temperature_mean"]
-
+from retry_requests import retry
+import openmeteo_requests
 
 
 def get_daily_weather(lats, longs, start, end, variables) -> pd.DataFrame:
-    cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
-    retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-    openmeteo = openmeteo_requests.Client(session=retry_session)
+    # --- normalize dates (critical) ---
+    start = pd.to_datetime(start).strftime("%Y-%m-%d")
+    end   = pd.to_datetime(end).strftime("%Y-%m-%d")
 
-    url = "https://archive-api.open-meteo.com/v1/archive"
+    if not isinstance(lats, (list, tuple)):
+        lats = [lats]
+    if not isinstance(longs, (list, tuple)):
+        longs = [longs]
+    if len(lats) != len(longs):
+        raise ValueError("lats and longs must have same length")
 
-    if not isinstance(lats, (list, tuple)):  lats = [lats]
-    if not isinstance(longs, (list, tuple)): longs = [longs]
-    if isinstance(variables, (list, tuple)):  # <-- key change
-        daily_param = ",".join(variables)
+    if isinstance(variables, (list, tuple)):
+        vars_list = list(variables)
+        daily_param = ",".join(vars_list)
     else:
-        daily_param = variables  # already a CSV string
+        vars_list = [v.strip() for v in variables.split(",")]
+        daily_param = variables
+
+    # --- simple retry session, no cache ---
+    session = retry(
+        requests.Session(),
+        retries=5,
+        backoff_factor=0.2
+    )
+
+    openmeteo = openmeteo_requests.Client(session=session)
 
     params = {
         "latitude": ",".join(map(str, lats)),
         "longitude": ",".join(map(str, longs)),
-        "daily": daily_param,                     # <-- pass CSV
+        "daily": daily_param,
         "start_date": start,
         "end_date": end,
         "timezone": "UTC",
-        # optionally: "models": "era5_land"  # good for precip/temps
     }
 
-    responses = openmeteo.weather_api(url, params=params)
+    responses = openmeteo.weather_api(
+        "https://archive-api.open-meteo.com/v1/archive",
+        params=params,
+    )
 
     frames = []
-    for idx, resp in enumerate(responses):
-        daily = resp.Daily()
-        data = {
-            "date": pd.date_range(
+
+    for i, resp in enumerate(responses):
+        try:
+            daily = resp.Daily()
+            if daily is None:
+                continue
+
+            dates = pd.date_range(
                 start=pd.to_datetime(daily.Time(), unit="s", utc=True),
                 end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
                 freq=pd.Timedelta(seconds=daily.Interval()),
                 inclusive="left",
-            ),
-            "lat": lats[idx],
-            "lon": longs[idx],
-        }
-        # Map returned arrays in the same order you sent in `variables`
-        vars_list = daily_param.split(",")
-        for i in range(daily.VariablesLength()):
-            name = vars_list[i] if i < len(vars_list) else f"var_{i}"
-            data[name] = daily.Variables(i).ValuesAsNumpy()
+            )
 
-        frames.append(pd.DataFrame(data))
+            data = {
+                "date": dates,
+                "lat": lats[i],
+                "lon": longs[i],
+            }
 
-    return pd.concat(frames, ignore_index=True)
+            for j, name in enumerate(vars_list):
+                if j < daily.VariablesLength():
+                    vals = daily.Variables(j).ValuesAsNumpy()
+                    data[name] = vals if len(vals) == len(dates) else [pd.NA] * len(dates)
+                else:
+                    data[name] = [pd.NA] * len(dates)
+
+            frames.append(pd.DataFrame(data))
+
+        except Exception:
+            continue
+
+    if not frames:
+        return pd.DataFrame(columns=["date", "lat", "lon"] + vars_list)
+
+    out = pd.concat(frames, ignore_index=True)
+    out["date"] = pd.to_datetime(out["date"], utc=True).dt.normalize()
+
+    return out
 
 
-def aggregate_weather(cities, start, end, variables):
-    """
-    Aggregate weather for all cities in a single Open-Meteo request.
-    This is very gentle on the API because it uses one batched call.
-    """
+
+
+def fetch(cities, variables, start, end):
 
     lats  = [c["lat"] for c in cities]
     longs = [c["lon"] for c in cities]
@@ -82,24 +101,94 @@ def aggregate_weather(cities, start, end, variables):
     # Map (lat, lon) -> city name
     coord_to_name = {(c["lat"], c["lon"]): c["name"] for c in cities}
 
-    df["City_Name"] = [
+    df["city_anme"] = [
         coord_to_name.get((lat, lon), None)
         for lat, lon in zip(df["lat"], df["lon"])
     ]
 
+    df =  (
+        df
+        .groupby(['date'], as_index=False)[variables]
+        .mean()
+    )
+
+    return df
+
+def standardize(df):
+    df = df.copy()
+
+    # Rename if needed
+    if "date" in df.columns:
+        df = df.rename(columns={"date": "datetime"})
+
+    # Ensure datetime dtype + timezone
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+
+    # Set as index and sort
+    df = (
+        df.set_index("datetime")
+          .sort_index()
+    )
+
     return df
 
 
-def fetch():
+def validate(df: pd.DataFrame) -> None:
+    # Expect daily indexed by date with lat/lon columns + variables
+   
+    if df is None or not isinstance(df, pd.DataFrame):
+        raise ValueError("weather: df must be a DataFrame")
+    if df.empty:
+        raise ValueError("weather: DataFrame is empty")
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("weather: index must be a DatetimeIndex (date)")
+    if df.index.hasnans:
+        raise ValueError("weather: index contains NaNs")
+    if df.index.duplicated().any():
+        raise ValueError("weather: duplicate dates in index (should be 1 row per day)")
+    if not df.index.is_monotonic_increasing:
+        raise ValueError("weather: dates must be sorted increasing")
 
-    return None
+    # Require at least 1 feature column
+    if df.shape[1] == 0:
+        raise ValueError("weather: no feature columns found")
+
+    # All-NaN columns are almost always a bug
+    if df.isna().all().any():
+        bad_cols = df.columns[df.isna().all()].tolist()
+        raise ValueError(f"weather: columns entirely NaN: {bad_cols}")
+
+    # Ensure all columns are numeric (daily averages should be numeric)
+    non_numeric = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+    if non_numeric:
+        raise ValueError(f"weather: non-numeric columns found: {non_numeric}")
+
+    # Optional: basic sanity—values shouldn't be all identical (often indicates failed parsing)
+    # Keep it conservative: only flag if *every* column is constant.
+    if all(df[c].nunique(dropna=True) <= 1 for c in df.columns):
+        raise ValueError("weather: all columns are constant/empty; likely bad fetch or parsing")
 
 
-def standardize():
 
-    return None
+if __name__ == "__main__":
 
+    XLE_VOL_WEATHER_FEATURES = [
+        # Temperature / demand uncertainty
+        "temperature_2m_mean",
+        "apparent_temperature_mean",
+    ]
 
-def validate():
+    CITIES_BY_STATE = [
+    {"name": "Montgomery, AL", "lat": 32.36, "lon": -86.30},
+    {"name": "Anchorage, AK", "lat": 61.21, "lon": -149.90},
+    {"name": "Phoenix, AZ", "lat": 33.45, "lon": -112.07},
+    ]
 
-    return None
+    start = "2025-12-12"
+    end = "2025-12-20"
+
+    df = fetch(CITIES_BY_STATE,XLE_VOL_WEATHER_FEATURES,  start, end)
+    df = standardize(df)
+    validate(df)
+
+    print(df)

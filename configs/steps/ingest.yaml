@@ -8,19 +8,59 @@ sources:
     enabled: true
     store_path: data/raw/equities.parquet
     provider: yfin
-    symbols: ["XLE", "SPY"]
+    symbols: 
+      - XLE
+      - SPY
 
   macro:
     enabled: true
     store_path: data/raw/macro.parquet
     provider: fred
-    series: ["CPIAUCSL", "DFF"]
+    series: 
+      # ===== Implied / Rates / Stress
+      - VIXCLS        # Implied equity volatility
+      - EFFR          # Fed Funds rate (daily)
+      - DGS2          # 2-year Treasury yield
+      - DGS10         # 10-year Treasury yield
+      - TEDRATE       # Funding stress
+
+      # ===== Commodity
+      - DCOILWTICO    # Crude oil spot
+      - DHHNGSP       # Natural gas
+      - WPROPANEMBTX  # Propane TX
+      - GASREGCOVW    # Weighted average gas prices
+
+      # ===== Currency
+      - DEXUSEU       # USD / EUR
+      - DEXMXUS       # USD / MXN
+      - DEXCHUS       # USD / China
+    
 
   weather:
     enabled: true
     store_path: data/raw/weather.parquet
     provider: open_meteo
-    variables: ["temperature_2m", "precipitation"]
+    variables: 
+      # Temperature / demand uncertainty
+        - temperature_2m_mean
+        - apparent_temperature_mean
+
+        # Moisture / storm risk
+        - precipitation_sum 
+        - precipitation_hours
+        - snowfall_sum
+
+        # Wind / operational disruption
+        - wind_speed_10m_mean
+        - wind_gusts_10m_mean
+
+        # Cloud / atmospheric instability
+        - cloud_cover_mean
+
+        # Humidity / pressure (weather regime)
+        - relative_humidity_2m_mean
+        - pressure_msl_mean
+
     frequency: daily
 
     locations:

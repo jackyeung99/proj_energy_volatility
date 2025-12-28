@@ -1,6 +1,7 @@
-paths:
-  data_dir: data
-  artifacts_dir: artifacts
+
+storage:
+  backend: local
+  base_dir: data
 
 steps:
   ingestion: configs/steps/ingest.yaml

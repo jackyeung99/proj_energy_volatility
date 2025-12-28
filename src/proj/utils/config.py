@@ -42,3 +42,4 @@ def load_config(cfg_path: str | Path) -> Dict[str, Any]:
         raise ValueError("Top-level config must be a dictionary.")
 
     return cfg
+
