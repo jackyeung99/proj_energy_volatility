@@ -1,0 +1,10 @@
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+
+steps:
+  ingestion: configs/steps/ingest.yaml
+  merge: configs/steps/merge.yaml
+  build_features: configs/steps/build_features.yaml
+  training: configs/steps/training.yaml
+  prediction: configs/steps/prediction.yaml

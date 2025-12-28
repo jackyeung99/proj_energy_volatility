@@ -95,7 +95,7 @@ def fetch():
     return None
 
 
-def standarize():
+def standardize():
 
     return None
 

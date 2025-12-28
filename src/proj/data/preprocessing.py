@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from proj.data.reshaping import long_to_wide
+
 from proj.features import transforms
 
 def clean_stock_df(df):

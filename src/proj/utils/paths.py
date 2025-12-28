@@ -18,5 +18,5 @@ def build_paths(root: Path) -> dict[str, Path]:
         "SRC": src,
         "DATA": data,
         "MODELS": src / "models",
-        "CONFIG": root / "config"
+        "CONFIG": root / "configs"
     }

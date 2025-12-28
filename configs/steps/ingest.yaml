@@ -1,0 +1,231 @@
+ingestion:
+  mode: incremental
+  date_column: timestamp
+  lookback_days: 
+
+sources:
+  equities:
+    enabled: true
+    store_path: data/raw/equities.parquet
+    provider: yfin
+    symbols: ["XLE", "SPY"]
+
+  macro:
+    enabled: true
+    store_path: data/raw/macro.parquet
+    provider: fred
+    series: ["CPIAUCSL", "DFF"]
+
+  weather:
+    enabled: true
+    store_path: data/raw/weather.parquet
+    provider: open_meteo
+    variables: ["temperature_2m", "precipitation"]
+    frequency: daily
+
+    locations:
+      - name: Montgomery, AL
+        lat: 32.36
+        lon: -86.30
+
+      - name: Anchorage, AK
+        lat: 61.21
+        lon: -149.90
+
+      - name: Phoenix, AZ
+        lat: 33.45
+        lon: -112.07
+
+      - name: Little Rock, AR
+        lat: 34.74
+        lon: -92.28
+
+      - name: Los Angeles, CA
+        lat: 34.05
+        lon: -118.24
+
+      - name: Denver, CO
+        lat: 39.74
+        lon: -104.99
+
+      - name: Hartford, CT
+        lat: 41.76
+        lon: -72.68
+
+      - name: Dover, DE
+        lat: 39.15
+        lon: -75.52
+
+      - name: Washington, D.C.
+        lat: 38.90
+        lon: -77.03
+
+      - name: Jacksonville, FL
+        lat: 30.33
+        lon: -81.65  
+
+      - name: Atlanta, GA
+        lat: 33.75
+        lon: -84.39
+
+      - name: Honolulu, HI
+        lat: 21.30
+        lon: -157.85
+
+      - name: Boise, ID
+        lat: 43.61
+        lon: -116.20
+
+      - name: Chicago, IL
+        lat: 41.88
+        lon: -87.63
+
+      - name: Indianapolis, IN
+        lat: 39.76
+        lon: -86.15
+
+      - name: Des Moines, IA
+        lat: 41.60
+        lon: -93.60
+
+      - name: Wichita, KS
+        lat: 37.68
+        lon: -97.33
+
+      - name: Louisville, KY
+        lat: 38.25
+        lon: -85.75
+
+      - name: New Orleans, LA
+        lat: 29.95
+        lon: -90.07
+
+      - name: Augusta, ME
+        lat: 44.31
+        lon: -69.77
+
+      - name: Baltimore, MD
+        lat: 39.29
+        lon: -76.61
+
+      - name: Boston, MA
+        lat: 42.36
+        lon: -71.06
+
+      - name: Detroit, MI
+        lat: 42.33
+        lon: -83.04
+
+      - name: Minneapolis, MN
+        lat: 44.98
+        lon: -93.27
+
+      - name: Jackson, MS
+        lat: 32.29
+        lon: -90.18
+
+      - name: Kansas City, MO
+        lat: 39.10
+        lon: -94.58
+
+      - name: Helena, MT
+        lat: 46.59
+        lon: -112.03
+
+      - name: Omaha, NE
+        lat: 41.25
+        lon: -95.93
+
+      - name: Las Vegas, NV
+        lat: 36.17
+        lon: -115.14
+
+      - name: Concord, NH
+        lat: 43.20
+        lon: -71.53
+
+      - name: Newark, NJ
+        lat: 40.73
+        lon: -74.17
+
+      - name: Albuquerque, NM
+        lat: 35.08
+        lon: -106.65
+
+      - name: New York, NY
+        lat: 40.71
+        lon: -74.01
+
+      - name: Charlotte, NC
+        lat: 35.22
+        lon: -80.84
+
+      - name: Bismarck, ND
+        lat: 46.80
+        lon: -100.78
+
+      - name: Columbus, OH
+        lat: 39.96
+        lon: -82.99
+
+      - name: Oklahoma City, OK
+        lat: 35.46
+        lon: -97.51
+
+      - name: Portland, OR
+        lat: 45.52
+        lon: -122.67
+
+      - name: Philadelphia, PA
+        lat: 39.95
+        lon: -75.16
+
+      - name: Providence, RI
+        lat: 41.82
+        lon: -71.41
+
+      - name: Columbia, SC
+        lat: 34.00
+        lon: -81.03
+
+      - name: Sioux Falls, SD
+        lat: 43.54
+        lon: -96.73
+
+      - name: Nashville, TN
+        lat: 36.16
+        lon: -86.78
+
+      - name: Houston, TX
+        lat: 29.76
+        lon: -95.36
+
+      - name: Salt Lake City, UT
+        lat: 40.76
+        lon: -111.89
+
+      - name: Burlington, VT
+        lat: 44.47
+        lon: -73.21
+
+      - name: Richmond, VA
+        lat: 37.54
+        lon: -77.43
+
+      - name: Seattle, WA
+        lat: 47.61
+        lon: -122.33
+
+      - name: Charleston, WV
+        lat: 38.34
+        lon: -81.63
+
+      - name: Milwaukee, WI
+        lat: 43.03
+        lon: -87.90
+
+      - name: Cheyenne, WY
+        lat: 41.13
+        lon: -104.82
+
+

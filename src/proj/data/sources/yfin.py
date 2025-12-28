@@ -1,8 +1,6 @@
-import yfinance as yf 
-
-
 from __future__ import annotations
 
+import yfinance as yf 
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Iterable, List, Optional, Tuple, Union, Dict
@@ -31,8 +29,7 @@ class FetchConfig:
 def fetch(
     features: FetchConfig,
     start: DateLike,
-    end: DateLike,
-    *
+    end: DateLike
 ) -> pd.DataFrame:
     """
     Fetch stock data using chunked date ranges.
@@ -97,7 +94,7 @@ def fetch(
     return pd.concat(out, ignore_index=True)
 
 
-def standarize(df: pd.DataFrame) -> pd.DataFrame:
+def standardize(df: pd.DataFrame) -> pd.DataFrame:
     """
     Standardize column names/dtypes and create basic derived fields.
 
@@ -170,9 +167,8 @@ def standarize(df: pd.DataFrame) -> pd.DataFrame:
 
 def validate(
     df: pd.DataFrame,
-    *,
     require_ohlc: bool = False,
-    min_rows_per_ticker: int = 2,
+    min_rows_per_ticker: int = 2
 ) -> Dict[str, object]:
     """
     Validate standardized stock data.
