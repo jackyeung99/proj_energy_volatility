@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller
+import statsmodels.api as sm
 
 def difference(series, d=1):
     s = series
@@ -24,7 +25,7 @@ def log_returns(df, column):
     return r
 
 
-def realized_vol(time_series, window: int = 21, annualize: bool = False) -> pd.DataFrame:
+def rolling_vol(time_series, window: int = 21, annualize: bool = False) -> pd.DataFrame:
     """Compute rolling standard deviation of daily returns (realized volatility)."""
     
     time_series = time_series.copy()
@@ -36,7 +37,7 @@ def realized_vol(time_series, window: int = 21, annualize: bool = False) -> pd.D
     return volatility 
 
 
-def realized_var(time_series, window: int = 21, annualize: bool = False) -> pd.DataFrame:
+def rolling_var(time_series, window: int = 21, annualize: bool = False) -> pd.DataFrame:
     """Compute rolling standard deviation of daily returns (realized volatility)."""
     
     time_series = time_series.copy()
@@ -94,3 +95,40 @@ def enforce_stationarity(X, max_differencing = 4, threshold = .05):
         stationary_df[col_name] = time_series  # keep NaNs; drop later in pipeline
 
     return stationary_df
+
+
+def estimate_idiosyncratic(df, window: int = 260):
+    betas = []
+    residuals = []
+
+    for i in range(len(df)):
+        if i < window:
+            betas.append(np.nan)
+            residuals.append(np.nan)
+            continue
+
+        y = df["XLE_r"].iloc[i-window:i]
+        x = df["SPY_r"].iloc[i-window:i]
+        X = sm.add_constant(x)  # columns: ['const', 'SPY_r'] (name depends on x.name)
+
+        res = sm.OLS(y, X).fit()
+
+        # robust indexing (no positional Series indexing)
+        alpha = res.params["const"]
+        # x.name is typically "SPY_r"; fall back safely if needed
+        beta_name = x.name if x.name in res.params.index else res.params.index[1]
+        beta = res.params[beta_name]
+
+        betas.append(beta)
+
+        spy_i = df["SPY_r"].iloc[i]
+        residuals.append(df["XLE_r"].iloc[i] - (alpha + beta * spy_i))
+
+    df = df.copy()
+    df["XLE_beta"] = betas
+    df["XLE_idio"] = residuals
+    return df
+
+def winsorize(s: pd.Series, p: float) -> pd.Series:
+    lo, hi = s.quantile([p, 1 - p])
+    return s.clip(lo, hi)

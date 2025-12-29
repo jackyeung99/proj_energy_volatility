@@ -1,0 +1,74 @@
+resample_freq: 1D
+lags: 1
+log_eps: 1e-12
+eps: 1e-8
+random_state: 99
+
+sources:
+  equities_intra:
+    enabled: false
+    data_path: bronze/equities.parquet
+    store_path: silver/equities.parquet
+    provider: yfin
+
+  equities_daily:
+    enabled: true
+
+    # I/O
+    data_path: bronze/equities_daily.parquet
+    store_path: silver/equities_daily.parquet
+    provider: yfin
+
+    # --- calendar handling
+    calendar:
+      use_business_days: true
+      ffill: true
+
+    # --- column roles
+    price_cols:        # transformed to log returns
+      - HYG
+      - TLT
+      - UNG
+      - USO
+
+    vol_cols:          # transformed to log levels
+      - ^VIX
+      - ^OVX
+
+    # --- feature engineering
+    features:
+      add_absrets: true        # |returns| for volatility regressions
+      add_vol_logs: true       # log(VIX), log(OVX)
+      keep_raw_levels: false   # do not pass price levels to models
+
+    # --- tail handling
+    winsorization:
+      enabled: true
+      p: 0.005
+      cols:
+        - UNG_ret
+        - USO_ret
+
+    
+  macro:
+    enabled: false
+    data_path: bronze/macro.parquet
+    store_path: silver/macro.parquet
+    provider: fred
+
+
+  weather:
+    enabled: true
+    data_path: bronze/weather.parquet
+    store_path: silver/weather.parquet
+    provider: open_meteo
+
+    rolling_window: 30 
+    z_method: doy_robust
+
+    enable_iforest: true
+    contaimination: .01
+
+
+
+

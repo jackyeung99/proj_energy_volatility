@@ -1,7 +1,7 @@
 from proj.trading.session import IBKRSession
 from proj.data.sources.fred import fetch_fred_series
 from typing import List
-from proj.data.preprocessing import clean_stock_df, clean_macro_series
+from proj.features.preprocessing import clean_stock_df, clean_macro_series
 
 async def load_ibkr_prices(
     symbols: List[str],

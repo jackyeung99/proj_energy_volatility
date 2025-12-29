@@ -139,9 +139,13 @@ def ingest(storage: Storage, global_cfg: dict, step_cfg: dict) -> dict:
 
 
     # Explicit per-source calls
-    eq_cfg = sources_cfg.get("equities", {})
+    eq_cfg = sources_cfg.get("equities_intra", {})
     if eq_cfg.get("enabled", True):
-        results["equities"] = ingest_one_source(storage, global_cfg, base_ingest_cfg, "equities", eq_cfg)
+        results["equities_intra"] = ingest_one_source(storage, global_cfg, base_ingest_cfg, "equities", eq_cfg)
+
+    eq_daily_cfg = sources_cfg.get("equities_daily", {})
+    if eq_daily_cfg.get("enabled", True):
+        results["equities_daily"] = ingest_one_source(storage, global_cfg, base_ingest_cfg, "equities", eq_daily_cfg)
 
     macro_cfg = sources_cfg.get("macro", {})
     if macro_cfg.get("enabled", True):

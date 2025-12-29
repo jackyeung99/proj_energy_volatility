@@ -5,7 +5,7 @@ storage:
 
 steps:
   ingestion: configs/steps/ingest.yaml
+  features: configs/steps/build_features.yaml
   merge: configs/steps/merge.yaml
-  build_features: configs/steps/build_features.yaml
   training: configs/steps/training.yaml
-  prediction: configs/steps/prediction.yaml
+  prediction: configs/steps/prediction.yamlnotebooks

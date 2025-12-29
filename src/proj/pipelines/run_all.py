@@ -22,25 +22,20 @@ def run_all(cfg_path: str):
     # Step config paths are defined in cfg["steps"]
     steps = cfg.get("steps", {})
 
-   # ==== step 1 ====
-    ingest_cfg_path = steps["ingestion"]
-    ingest_cfg = load_config(ingest_cfg_path)
-    ingest(storage, cfg, ingest_cfg)
+    # ==== step 1 ====
+    # ingest_cfg_path = steps["ingestion"]
+    # ingest_cfg = load_config(ingest_cfg_path)
+    # ingest(storage, cfg, ingest_cfg)
 
     # ==== step 2 ====
+    features_cfg_path = steps["features"]
+    features_cfg = load_config(features_cfg_path)
+    construct_features(storage, cfg, features_cfg)
+
+    # ==== step 3 ====
     # merge_cfg_path = resolve_step_path(run_cfg_path, steps["merge"])
     # merge_cfg = load_config(merge_cfg_path)
     # merge_data(storage, cfg, merge_cfg)
-
-    # ==== step 3 ====
-    # features_cfg_path = resolve_step_path(run_cfg_path, steps["features"])
-    # features_cfg = load_config(features_cfg_path)
-    # construct_features(storage, cfg, features_cfg)
-
-    # ==== step 4 ====
-    # train_cfg_path = resolve_step_path(run_cfg_path, steps["train"])
-    # train_cfg = load_config(train_cfg_path)
-    # train(storage, cfg, train_cfg)
 
     # ==== step 5 ====
     # pred_cfg_path = resolve_step_path(run_cfg_path, steps["prediction"])
