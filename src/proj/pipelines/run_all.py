@@ -2,7 +2,7 @@ import os
 
 from proj.utils.paths import *
 from proj.utils.config import load_config
-from proj.data.storage import LocalStorage, URIStorage
+from proj.data.storage import make_storage
 
 from proj.pipelines.ingestion import ingest
 from proj.pipelines.merge import merge_data
@@ -10,21 +10,13 @@ from proj.pipelines.build_features import construct_features
 from proj.pipelines.training import train
 from proj.pipelines.prediction import predict_next
 
-def make_storage(global_cfg: dict):
-    s = global_cfg["storage"]
-    if s["backend"] == "local":
-        return LocalStorage(base_dir=Path(s["base_dir"]))
-    if s["backend"] == "uri":
-        return URIStorage(base_uri=s["base_uri"])
-    raise ValueError(f"Unknown storage backend: {s['backend']}")
 
 
 def run_all(cfg_path: str):
     run_cfg_path = Path(cfg_path).resolve()
     cfg = load_config(cfg_path)
-    print(cfg)
 
-     # Create storage once (toggle local/cloud via config)
+    # Create storage once (toggle local/cloud via config)
     storage = make_storage(cfg)
 
     # Step config paths are defined in cfg["steps"]
@@ -33,7 +25,7 @@ def run_all(cfg_path: str):
    # ==== step 1 ====
     ingest_cfg_path = steps["ingestion"]
     ingest_cfg = load_config(ingest_cfg_path)
-    # ingest(storage, cfg, ingest_cfg)
+    ingest(storage, cfg, ingest_cfg)
 
     # ==== step 2 ====
     # merge_cfg_path = resolve_step_path(run_cfg_path, steps["merge"])

@@ -1,10 +1,18 @@
 from pandas_datareader import data as pdr
 import pandas as pd
 
-def fetch(features, start, end):
+def fetch(series, start, end):
+
+    start = pd.to_datetime(start)
+    end = pd.to_datetime(end)
+    
+    if getattr(start, "tzinfo", None) is not None:
+        start = start.tz_convert(None)
+    if getattr(end, "tzinfo", None) is not None:
+        end = end.tz_convert(None)
 
     fred = pdr.DataReader(
-        features,
+        series,
         "fred",
         start=start,
         end=end

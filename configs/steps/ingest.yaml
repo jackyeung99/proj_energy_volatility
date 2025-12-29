@@ -1,20 +1,22 @@
 ingestion:
-  mode: incremental
-  date_column: timestamp
-  lookback_days: 
+  mode: append
+  lookback_days: 1
+  # start: "2024-01-01T00:00:00Z"
+  # end:   "2024-12-31T23:59:59Z"
 
 sources:
   equities:
     enabled: true
-    store_path: data/raw/equities.parquet
+    store_path: bronze/equities.parquet
     provider: yfin
+    interval: 1h
     symbols: 
       - XLE
       - SPY
 
   macro:
     enabled: true
-    store_path: data/raw/macro.parquet
+    store_path: bronze/macro.parquet
     provider: fred
     series: 
       # ===== Implied / Rates / Stress
@@ -22,7 +24,6 @@ sources:
       - EFFR          # Fed Funds rate (daily)
       - DGS2          # 2-year Treasury yield
       - DGS10         # 10-year Treasury yield
-      - TEDRATE       # Funding stress
 
       # ===== Commodity
       - DCOILWTICO    # Crude oil spot
@@ -38,7 +39,7 @@ sources:
 
   weather:
     enabled: true
-    store_path: data/raw/weather.parquet
+    store_path: bronze/weather.parquet
     provider: open_meteo
     variables: 
       # Temperature / demand uncertainty

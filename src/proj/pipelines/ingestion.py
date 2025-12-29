@@ -1,29 +1,67 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict
-from datetime import datetime
+from typing import Any, Dict
+import pandas as pd 
 
 from proj.data.ingestion_state import get_last_available_date, compute_fetch_window, update_state
 from proj.data.sources import yfin, fred, weather
-
-# NOTE: storage is injected (LocalStorage or URIStorage)
 from proj.data.storage import Storage
 
-
-@dataclass(frozen=True)
-class SourceAdapter:
-    name: str
-    fetch: Callable[[datetime, datetime, dict], "object"]          # -> pd.DataFrame
-    standardize: Callable[["object", dict], "object"]              # -> pd.DataFrame
-    validate: Callable[["object", dict], None]
+from proj.data.merge import merge_and_dedup
 
 
-ADAPTERS: Dict[str, SourceAdapter] = {
-    "equities": SourceAdapter("equities", yfin.fetch, yfin.standardize, yfin.validate),
-    "macro":    SourceAdapter("macro",    fred.fetch, fred.standardize, fred.validate),
-    "weather":  SourceAdapter("weather",  weather.fetch, weather.standardize, weather.validate),
-}
+def fetch_by_source(source_name: str, fetch_start, fetch_end, source_cfg: dict):
+    """
+    Only fetch differs per source.
+    - equities: yfin.fetch(start, end, tickers=..., interval=..., ...)
+    - macro:    fred.fetch(start, end, series=..., provider=..., ...)
+    - weather:  weather.fetch(start, end, location=..., units=..., ...)
+    Adjust the kwargs mappings to your real config keys.
+    """
+    if source_name == "equities":
+        return yfin.fetch(
+            tickers=source_cfg["symbols"],
+            start=fetch_start,
+            end=fetch_end,
+            interval=source_cfg.get("interval", "1d"),
+        )
+
+    if source_name == "macro":
+        return fred.fetch(
+            series=source_cfg["series"],
+            start=fetch_start,
+            end=fetch_end
+        )
+
+    if source_name == "weather":
+        return weather.fetch(
+            cities=source_cfg["locations"],
+            variables=source_cfg["variables"],
+            start=fetch_start,
+            end=fetch_end
+        )
+
+    raise ValueError(f"Unknown source '{source_name}'")
+
+
+def standardize_by_source(source_name: str, df,):
+    if source_name == "equities":
+        return yfin.standardize(df)
+    if source_name == "macro":
+        return fred.standardize(df)
+    if source_name == "weather":
+        return weather.standardize(df)
+    raise ValueError(f"Unknown source '{source_name}'")
+
+
+def validate_by_source(source_name: str, df) -> None:
+    if source_name == "equities":
+        return yfin.validate(df)
+    if source_name == "macro":
+        return fred.validate(df)
+    if source_name == "weather":
+        return weather.validate(df)
+    raise ValueError(f"Unknown source '{source_name}'")
 
 
 def ingest_one_source(
@@ -33,63 +71,84 @@ def ingest_one_source(
     source_name: str,
     source_cfg: dict,
 ) -> dict:
-    adapter = ADAPTERS[source_name]
+    store_key = source_cfg["store_path"]
 
-    # 1) storage key 
-    store_key = source_cfg["store_path"]        
-    date_col = base_ingest_cfg["date_column"]
 
-    # 2) last date (teach get_last_available_date to accept storage+key)
-    last_date = get_last_available_date(storage, store_key, date_col)
+    # 1) last date (per source)
+    last_date = get_last_available_date(storage, store_key)
 
-    # 3) compute window
+    print(f"The current data is up to : {last_date} ")
+    # 2) compute window (per source)
+    # Optional overrides for testing
+    start_override = pd.to_datetime(base_ingest_cfg.get("start"), utc=True) # parse
+    end_override = pd.to_datetime(base_ingest_cfg.get("end"), utc=True)
+
+
+
     fetch_start, fetch_end = compute_fetch_window(
         last_date=last_date,
         lookback_days=base_ingest_cfg.get("lookback_days", 0),
         mode=base_ingest_cfg["mode"],
+        start_override=start_override,
+        end_override=end_override,
+        # freeze_now=... (optional)
     )
 
-    # 4) fetch
-    new_df = adapter.fetch(fetch_start, fetch_end, source_cfg)
+    print(f" Pulling information from {fetch_start} to {fetch_end}")
 
-    # # 5) standardize + validate
-    # new_df = adapter.standardize(new_df, source_cfg)
-    # adapter.validate(new_df, source_cfg)
+    # # 3) fetch (only part that differs)
+    new_df = fetch_by_source(source_name, fetch_start, fetch_end, source_cfg)
 
-    # # 6) merge (per source)
-    # if storage.exists(store_key):
-    #     old_df = storage.read_parquet(store_key)
-    #     merged = merge_and_dedup(old_df, new_df, key=date_col)   # keep your existing function
-    # else:
-    #     merged = new_df
+    # # 4) standardize + validate
+    new_df = standardize_by_source(source_name, new_df)
+    validate_by_source(source_name, new_df)
 
-    # # 7) write
-    # storage.write_parquet(merged, store_key)
+    # # 5) merge/write/state
+    if storage.exists(store_key):
+        old_df = storage.read_parquet(store_key)
+        merged = merge_and_dedup(old_df, new_df)
+    else:
+        merged = new_df
 
-    # # 8) update state (modify update_state similarly: update_state(storage, key, ...))
-    # update_state(storage, store_key, merged, {"ingestion": base_ingest_cfg, "source": source_cfg})
+    storage.write_parquet(merged, store_key)
 
-    # # 9) return stats
-    # last_ts = merged[date_col].max() if len(merged) else None
-    # return {
-    #     "source": source_name,
-    #     "store_key": store_key,
-    #     "rows_written": int(len(merged)),
-    #     "last_timestamp": last_ts,
-    #     "fetch_window": (fetch_start, fetch_end),
-    # }
+    update_state(
+        storage,
+        store_key,
+        merged,
+        pull_start=fetch_start,
+        pull_end=fetch_end,
+        meta={"ingestion": base_ingest_cfg, "source": source_cfg},
+    )
+
+    last_ts = merged.index.max() if len(merged) else None
+    return {
+        "source": source_name,
+        "store_key": store_key,
+        "rows_written": int(len(merged)),
+        "last_timestamp": last_ts,
+        "fetch_window": (fetch_start, fetch_end),
+    }
 
 
 def ingest(storage: Storage, global_cfg: dict, step_cfg: dict) -> dict:
     base_ingest_cfg = step_cfg["ingestion"]
     sources_cfg = step_cfg["sources"]
 
-    results = {}
-    for source_name, cfg in sources_cfg.items():
-        if not cfg.get("enabled", True):
-            continue
-        if source_name not in ADAPTERS:
-            raise ValueError(f"Unknown source '{source_name}'. Known: {list(ADAPTERS)}")
-        results[source_name] = ingest_one_source(storage, global_cfg, base_ingest_cfg, source_name, cfg)
+    results: Dict[str, Any] = {}
+
+
+    # Explicit per-source calls
+    eq_cfg = sources_cfg.get("equities", {})
+    if eq_cfg.get("enabled", True):
+        results["equities"] = ingest_one_source(storage, global_cfg, base_ingest_cfg, "equities", eq_cfg)
+
+    macro_cfg = sources_cfg.get("macro", {})
+    if macro_cfg.get("enabled", True):
+        results["macro"] = ingest_one_source(storage, global_cfg, base_ingest_cfg, "macro", macro_cfg)
+
+    weather_cfg = sources_cfg.get("weather", {})
+    if weather_cfg.get("enabled", True):
+        results["weather"] = ingest_one_source(storage, global_cfg, base_ingest_cfg, "weather", weather_cfg)
 
     return {"ingestion_results": results}

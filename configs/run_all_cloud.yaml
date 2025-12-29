@@ -1,6 +1,6 @@
 storage:
-  backend: uri
-  base_uri: s3://my-bucket/proj-data
+  backend: s3
+  base_uri: s3://my-bucket/
 
 steps:
   ingestion: ingest.yaml
