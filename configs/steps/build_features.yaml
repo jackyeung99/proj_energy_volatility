@@ -6,7 +6,7 @@ random_state: 99
 
 sources:
   equities_intra:
-    enabled: false
+    enabled: true
     data_path: bronze/equities.parquet
     store_path: silver/equities.parquet
     provider: yfin
@@ -51,7 +51,7 @@ sources:
 
     
   macro:
-    enabled: false
+    enabled: true
     data_path: bronze/macro.parquet
     store_path: silver/macro.parquet
     provider: fred

@@ -39,13 +39,16 @@ def preprocess_one_source(
     data_key = source_cfg["data_path"]
     raw_df = storage.read_parquet(data_key)
 
-    print(raw_df.head())
     #perform transformations and pre processing
     new_df = preprocess_by_source(source_name, raw_df, base_features_cfg, source_cfg)
 
+    print("=" * 15, source_name, "=" * 15)
+    print(f"Length of Dataframe: {len(new_df)}")
     print(new_df.head())
+
+
     store_key = source_cfg["store_path"]
-    # storage.write_parquet(df, store_key)
+    storage.write_parquet(new_df, store_key)
 
 
     return {
