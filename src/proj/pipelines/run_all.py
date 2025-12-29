@@ -28,14 +28,14 @@ def run_all(cfg_path: str):
     # ingest(storage, cfg, ingest_cfg)
 
     # ==== step 2 ====
-    features_cfg_path = steps["features"]
-    features_cfg = load_config(features_cfg_path)
-    construct_features(storage, cfg, features_cfg)
+    # features_cfg_path = steps["features"]
+    # features_cfg = load_config(features_cfg_path)
+    # construct_features(storage, cfg, features_cfg)
 
     # ==== step 3 ====
-    # merge_cfg_path = resolve_step_path(run_cfg_path, steps["merge"])
-    # merge_cfg = load_config(merge_cfg_path)
-    # merge_data(storage, cfg, merge_cfg)
+    merge_cfg_path =  steps["merge"]
+    merge_cfg = load_config(merge_cfg_path)
+    merge_data(storage, cfg, merge_cfg)
 
     # ==== step 5 ====
     # pred_cfg_path = resolve_step_path(run_cfg_path, steps["prediction"])

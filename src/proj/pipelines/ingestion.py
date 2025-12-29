@@ -7,7 +7,7 @@ from proj.data.ingestion_state import get_last_available_date, compute_fetch_win
 from proj.data.sources import yfin, fred, weather
 from proj.data.storage import Storage
 
-from proj.data.merge import merge_and_dedup
+from proj.data.merge_helpers import merge_and_dedup
 
 
 def fetch_by_source(source_name: str, fetch_start, fetch_end, source_cfg: dict):

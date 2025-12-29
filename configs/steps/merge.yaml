@@ -1,0 +1,33 @@
+# config snippet: merge_gold
+merge_gold:
+  enabled: true
+
+  inputs:
+    equities: silver/equities.parquet
+    equities_daily: silver/equities_daily.parquet
+    macro: silver/macro.parquet
+    weather: silver/weather.parquet
+
+  merge:
+    anchor: equities
+    how: left
+
+    dropna_target: true
+    target_cols:
+      - log_rv_idio
+
+    start_date: null
+    end_date: null
+
+    enforce_lags_only: true
+
+    prefixes:
+      equities_daily: etf_
+      macro: macro_
+      weather: wx_
+
+  postprocess:
+    drop_cols: []
+
+  output:
+    store_path: gold/modeling_table.parquet

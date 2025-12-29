@@ -320,17 +320,23 @@ def preprocess_weather(
 
     # 3) multivariate isolation forest on z-space
     if enable_iforest:
-        if_cols = [f"{c}_anom_z" for c in cols]
-        out = anomaly_detection.compute_isolated_forest_anomaly(
-            out,
-            cols=if_cols,
-            contamination=contamination,
-            random_state=random_state,
-        )
-
+        # ensure these exist, then include them in lagging
+        iforest_cols = []
+        for c in ["weather_iforest_score", "weather_iforest_flag"]:
+            if c in out.columns:
+                iforest_cols.append(c)
+    else:
+        iforest_cols = []
+        
     # 4) lag anomaly features only, then drop contemporaneous
-    lag_cols = [f"{c}_anom_z" for c in cols] + [f"{c}_anom_absz" for c in cols]
-    lag_cols = [c for c in lag_cols if c in out.columns]
+    base_weather_cols = [c for c in cols if c in out.columns]
+
+    anom_cols = (
+        [f"{c}_anom_z" for c in cols] +
+        [f"{c}_anom_absz" for c in cols]
+    )
+
+    lag_cols = [c for c in (base_weather_cols + anom_cols + iforest_cols) if c in out.columns]
 
     out = _make_lags(out, lag_cols, max_lag=max_lag)
     out = out.drop(columns=lag_cols)
