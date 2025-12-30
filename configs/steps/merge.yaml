@@ -1,4 +1,5 @@
-# config snippet: merge_gold
+enabled: true
+
 merge_gold:
   enabled: true
 

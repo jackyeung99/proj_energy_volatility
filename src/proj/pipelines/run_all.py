@@ -19,28 +19,39 @@ def run_all(cfg_path: str):
     # Create storage once (toggle local/cloud via config)
     storage = make_storage(cfg)
 
-    # Step config paths are defined in cfg["steps"]
     steps = cfg.get("steps", {})
 
-    # ==== step 1 ====
-    # ingest_cfg_path = steps["ingestion"]
-    # ingest_cfg = load_config(ingest_cfg_path)
-    # ingest(storage, cfg, ingest_cfg)
+    # ==== Step 1: Ingestion ====
+    if "ingestion" in steps:
+        ingest_cfg = load_config(steps["ingestion"])
+        if ingest_cfg.get("enabled", True):
+            ingest(storage, cfg, ingest_cfg)
+        else:
+            print("Skipping ingestion (disabled)")
 
-    # ==== step 2 ====
-    # features_cfg_path = steps["features"]
-    # features_cfg = load_config(features_cfg_path)
-    # construct_features(storage, cfg, features_cfg)
+    # ==== Step 2: Feature construction ====
+    if "features" in steps:
+        features_cfg = load_config(steps["features"])
+        if features_cfg.get("enabled", True):
+            construct_features(storage, cfg, features_cfg)
+        else:
+            print("Skipping features (disabled)")
 
-    # ==== step 3 ====
-    merge_cfg_path =  steps["merge"]
-    merge_cfg = load_config(merge_cfg_path)
-    merge_data(storage, cfg, merge_cfg)
+    # ==== Step 3: Merge ====
+    if "merge" in steps:
+        merge_cfg = load_config(steps["merge"])
+        if merge_cfg.get("enabled", True):
+            merge_data(storage, cfg, merge_cfg)
+        else:
+            print("Skipping merge (disabled)")
 
-    # ==== step 5 ====
-    # pred_cfg_path = resolve_step_path(run_cfg_path, steps["prediction"])
-    # pred_cfg = load_config(pred_cfg_path)
-    # predict_next(storage, cfg, pred_cfg)
+    # ==== Step 4: Prediction (optional) ====
+    if "prediction" in steps:
+        pred_cfg = load_config(steps["prediction"])
+        if pred_cfg.get("enabled", False):
+            predict_next(storage, cfg, pred_cfg)
+        else:
+            print("Skipping prediction (disabled)")
 
 
 

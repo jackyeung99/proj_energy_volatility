@@ -8,4 +8,4 @@ steps:
   features: configs/steps/build_features.yaml
   merge: configs/steps/merge.yaml
   training: configs/steps/training.yaml
-  prediction: configs/steps/prediction.yamlnotebooks
+  prediction: configs/steps/prediction.yaml

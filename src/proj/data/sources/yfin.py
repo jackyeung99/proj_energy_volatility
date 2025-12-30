@@ -1,89 +1,161 @@
+
 from __future__ import annotations
 
-import yfinance as yf 
-from dataclasses import dataclass
-from datetime import timedelta
-from typing import Iterable, List, Optional, Tuple, Union, Dict, Sequence
-from proj.utils.dates import chunk_dates
-
+from typing import List, Sequence, Union
+import numpy as np
 import pandas as pd
-
+import yfinance as yf
 
 DateLike = Union[str, pd.Timestamp]
+
+
+def _normalize_range(start: DateLike, end: DateLike) -> tuple[pd.Timestamp, pd.Timestamp]:
+    start_ts = pd.to_datetime(start, utc=True)
+    end_ts = pd.to_datetime(end, utc=True)
+
+    # treat date-only end as inclusive (end-of-day)
+    if end_ts == end_ts.normalize():
+        end_ts = end_ts + pd.Timedelta(days=1)
+
+    return start_ts, end_ts
+
+
+def _chunks(start: pd.Timestamp, end: pd.Timestamp, chunk_days: int) -> List[tuple[pd.Timestamp, pd.Timestamp]]:
+    """
+    Half-open intervals: [cstart, cend)
+    """
+    out = []
+    cur = start
+    step = pd.Timedelta(days=chunk_days)
+    while cur < end:
+        nxt = min(cur + step, end)
+        out.append((cur, nxt))
+        cur = nxt
+    return out
+
+
+def _fetch_one_chunk(ticker: str, cstart: pd.Timestamp, cend: pd.Timestamp, interval: str) -> pd.DataFrame:
+    """
+    Fetch a single ticker for a single chunk. Returns tidy: timestamp,ticker,close
+    Uses yf.download for stability.
+    """
+    # yfinance prefers naive timestamps (interpreted as local market time); pass strings for robustness
+    df = yf.download(
+        tickers=ticker,
+        start=cstart.tz_convert(None),
+        end=cend.tz_convert(None),
+        interval=interval,
+        auto_adjust=False,
+        actions=False,
+        progress=False,
+        threads=False,
+        group_by="column",
+    )
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["timestamp", "ticker", "close"])
+
+    df = df.copy()
+    df.index = pd.to_datetime(df.index, utc=True)
+
+    # Some intervals return lowercase columns or missing Close; be defensive
+    if "Close" not in df.columns:
+        close_col = next((c for c in df.columns if str(c).lower() == "close"), None)
+        if close_col is None:
+            return pd.DataFrame(columns=["timestamp", "ticker", "close"])
+        df.rename(columns={close_col: "Close"}, inplace=True)
+
+    tidy = df[["Close"]].rename(columns={"Close": "close"}).reset_index()
+    tidy.columns = ["timestamp", "close"]
+    tidy["ticker"] = ticker
+    return tidy[["timestamp", "ticker", "close"]]
+
+
+def _repair_split_like_jumps(prices: pd.Series, max_abs_logret: float = 0.4) -> pd.Series:
+    """
+    Repairs split/adjustment glitches by rescaling the *post-jump* segment.
+    For ETFs, a single-bar +/-40% is almost surely a data issue.
+    """
+    s = prices.dropna().copy()
+    if s.empty or len(s) < 3:
+        return prices
+
+    lr = np.log(s).diff()
+    bad = lr.abs() > max_abs_logret
+    if not bad.any():
+        return prices
+
+    fixed = prices.copy()
+    bad_times = lr.index[bad]
+
+    for ts in bad_times:
+        loc = s.index.get_loc(ts)
+        if loc == 0:
+            continue
+        prev_ts = s.index[loc - 1]
+        factor = s.loc[prev_ts] / s.loc[ts]
+        fixed.loc[fixed.index >= ts] = fixed.loc[fixed.index >= ts] * factor
+
+    return fixed
 
 
 def fetch(
     tickers: Union[str, Sequence[str]],
     start: DateLike,
     end: DateLike,
-    interval: str = "1h",
-    chunk_size_days: int = 60,
+    interval: str = "60m",
+    chunk_size_days: int = 30,
+    repair_jumps: bool = True,
+    max_abs_logret: float = 0.4,
 ) -> pd.DataFrame:
     """
-    Fetch multiple tickers using yfinance.Tickers.history, chunked by date.
+    Robust multi-ticker intraday fetch (looped per ticker + chunked).
 
-    Returns a tidy DataFrame with columns: [timestamp, ticker, close].
+    Returns tidy DataFrame with columns: [timestamp, ticker, close].
     """
-
-    # normalize tickers into a list
     if isinstance(tickers, str):
-        tickers = [t.strip() for t in tickers.split() if t.strip()]
+        tickers = [t.strip() for t in tickers.replace(",", " ").split() if t.strip()]
+    tickers = list(tickers)
 
-    start_ts = pd.to_datetime(start, utc=True)
-    end_ts = pd.to_datetime(end, utc=True)
+    start_ts, end_ts = _normalize_range(start, end)
+    chunks = _chunks(start_ts, end_ts, chunk_days=chunk_size_days)
 
-    # treat date-only end as inclusive
-    if end_ts == end_ts.normalize():
-        end_ts = end_ts + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-
-    # compute chunks
-    chunks = chunk_dates((start_ts, end_ts), chunk_size=chunk_size_days)
     pieces: List[pd.DataFrame] = []
 
-    # create the yfinance Tickers object once
-    tick_obj = yf.Tickers(" ".join(tickers))
+    for ticker in tickers:
+        t_pieces: List[pd.DataFrame] = []
 
-    for cstart, cend in chunks:
-        # note: end is often exclusive in Yahoo — we add 1h buffer
-        df = tick_obj.history(
-            start=cstart,
-            end=cend ,
-            interval=interval,
-            group_by="ticker",
-            auto_adjust=False,
-            progress=False,
-            threads=True,
-        )
+        for cstart, cend in chunks:
+            tidy = _fetch_one_chunk(ticker, cstart, cend, interval=interval)
+            if tidy.empty:
+                continue
 
-        if df is None or df.empty:
+            # enforce half-open trimming [cstart, cend)
+            tidy = tidy[(tidy["timestamp"] >= cstart) & (tidy["timestamp"] < cend)]
+            t_pieces.append(tidy)
+
+        if not t_pieces:
             continue
 
-        # index is timestamp, level 0 of columns is ticker
-        df = df.copy()
-        df.index = pd.to_datetime(df.index, utc=True)
+        tdf = (
+            pd.concat(t_pieces, ignore_index=True)
+              .sort_values("timestamp")
+              .drop_duplicates(["timestamp"], keep="last")
+        )
 
-        # restrict to exact chunk range
-        df = df.loc[(df.index >= cstart) & (df.index <= cend)]
+        # optional repair for split-like glitches
+        if repair_jumps:
+            s = tdf.set_index("timestamp")["close"]
+            s_fixed = _repair_split_like_jumps(s, max_abs_logret=max_abs_logret)
+            tdf = s_fixed.reset_index()
+            tdf["ticker"] = ticker
+            tdf = tdf[["timestamp", "ticker", "close"]]
 
-        # if multicolumn: (ticker, OHLC...)
-        if isinstance(df.columns, pd.MultiIndex):
-            close_df = df.xs("Close", level=1, axis=1)
-        else:
-            # fallback if yfinance returns single-ticker flat columns
-            close_df = df[["Close"]]
-            close_df.columns = [tickers[0]]
-
-        # stack tidy: timestamp | ticker | close
-        tidy = close_df.stack().reset_index()
-        tidy.columns = ["timestamp", "ticker", "close"]
-
-        pieces.append(tidy)
+        pieces.append(tdf)
 
     if not pieces:
-        # return empty tidy structure if no data
         return pd.DataFrame(columns=["timestamp", "ticker", "close"])
 
-    # combine chunks, dedupe overlaps
     out = (
         pd.concat(pieces, ignore_index=True)
           .sort_values(["ticker", "timestamp"])

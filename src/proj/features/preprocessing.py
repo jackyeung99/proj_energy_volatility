@@ -87,37 +87,44 @@ def preprocess_equities(
     out = transforms.estimate_idiosyncratic(out, window=window)
     out = out.dropna(subset=["XLE_idio"])
 
-    # 3) Intraday squares for realized measures
+    # 3) Intraday components for realized measures
     out["xle_r_sq"] = out["XLE_r"] ** 2
-    out["idio_sq"] = out["XLE_idio"] ** 2
+    out["spy_r_sq"] = out["SPY_r"] ** 2
+    out["idio_sq"]  = out["XLE_idio"] ** 2
 
-    # 4) Aggregate to daily
+    # 4) Daily aggregation
     daily = out.resample(freq).agg(
-        rv_total=("xle_r_sq", "sum"),
+        rv_xle=("xle_r_sq", "sum"),
+        rv_spy=("spy_r_sq", "sum"),
         rv_idio=("idio_sq", "sum"),
-        mkt_ret=("SPY_r", "sum"),
-        ret=("XLE_r", "sum"),
+        ret_xle=("XLE_r", "sum"),
+        ret_spy=("SPY_r", "sum"),
+        ret_idio=("XLE_idio", "sum"),
         n_intra=("XLE_r", "count"),
     )
 
     # 5) Filter low-coverage days
     daily = daily.loc[daily["n_intra"] >= min_bins].copy()
 
-    # 6) Logs + sqrt RV
-    daily["log_rv_total"] = np.log(daily["rv_total"] + log_eps)
+    # 6) Logs + realized vol (sqrt RV)
+    daily["log_rv_xle"]  = np.log(daily["rv_xle"]  + log_eps)
+    daily["log_rv_spy"]  = np.log(daily["rv_spy"]  + log_eps)
     daily["log_rv_idio"] = np.log(daily["rv_idio"] + log_eps)
-    daily["rvol_total"] = np.sqrt(daily["rv_total"].clip(lower=0))
+
+    daily["rvol_xle"]  = np.sqrt(daily["rv_xle"].clip(lower=0))
+    daily["rvol_spy"]  = np.sqrt(daily["rv_spy"].clip(lower=0))
     daily["rvol_idio"] = np.sqrt(daily["rv_idio"].clip(lower=0))
 
     # 7) Tidy order
     cols = [
-        "ret", "mkt_ret",
-        "rv_total", "rv_idio",
-        "log_rv_total", "log_rv_idio",
-        "rvol_total", "rvol_idio",
+        "ret_xle", "ret_spy", "ret_idio",
+        "rv_xle", "rv_spy", "rv_idio",
+        "log_rv_xle", "log_rv_spy", "log_rv_idio",
+        "rvol_xle", "rvol_spy", "rvol_idio",
         "n_intra",
     ]
     return daily[cols].dropna()
+
 
 
 # ----------------------------
