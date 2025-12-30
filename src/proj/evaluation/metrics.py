@@ -27,20 +27,18 @@ def log_loss(var_true, var_pred):
     return np.mean()
 
 
-def qlike(var_true, var_pred):
-    """
-    QLIKE loss for variance forecasts.
-    Inputs MUST be variances, not volatilities.
-    """
-    var_true = np.sqrt(np.asarray(var_true, dtype=float))
-    var_pred = np.sqrt(np.asarray(var_pred, dtype=float))
 
-    if np.any(var_true < 0):
-        raise ValueError("var_true must be nonnegative.")
-    if np.any(var_pred <= 0):
-        raise ValueError("var_pred must be strictly positive.")
+def qlike(realized, forecast, eps=1e-12):
+    r = np.asarray(realized, dtype=float)
+    f = np.asarray(forecast, dtype=float)
 
-    ratio = var_true / var_pred
-    return np.mean(ratio - np.log(ratio) - 1)
+    if r.shape != f.shape:
+        raise ValueError(f"Shape mismatch: realized {r.shape}, forecast {f.shape}")
 
+    r = r + eps
+    f = f + eps
 
+    ratio = r / f
+    q = ratio - np.log(ratio) - 1
+
+    return float(np.mean(q))

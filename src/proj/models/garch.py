@@ -1,113 +1,214 @@
+from __future__ import annotations
 
-from sklearn.base import BaseEstimator, RegressorMixin
+from dataclasses import dataclass
+from typing import Optional, Union, Literal
+
 import numpy as np
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.metrics import mean_squared_error
+
 from arch import arch_model
 
+
+ArrayLike = Union[np.ndarray, list]
+
+
 class GARCHRegressor(BaseEstimator, RegressorMixin):
-    def __init__(self, returns, **model_params):
+    """
+    Sklearn-style wrapper around arch.arch_model for volatility forecasting.
+
+    Notes
+    -----
+    - `fit(y, X, returns=...)` uses `y` only for its length (to align the returns slice),
+      which matches your current workflow (target might be RV/logRV, but GARCH is fit on returns).
+    - By default, `predict()` returns *conditional variance* forecasts.
+    """
+
+    def __init__(
+        self,
+        *,
+        vol: str = "GARCH",
+        p: int = 1,
+        o: int = 0,
+        q: int = 1,
+        power: float = 2.0,
+        dist: str = "t",
+        mean: Optional[str] = None,          # if None, decided in fit()
+        mean_lags: int = 1,                  # mapped to arch_model(..., lags=mean_lags)
+        rescale: bool = True,
+        horizon: int = 1,                    # default forecast horizon for predict()
+        output: Literal["variance", "volatility"] = "variance",
+        fit_options: Optional[dict] = None,   # options passed to result.fit(...)
+        last_observation_only: bool = True,   # return last available forecast by default
+    ):
+        self.vol = vol
+        self.p = p
+        self.o = o
+        self.q = q
+        self.power = power
+        self.dist = dist
+        self.mean = mean
+        self.mean_lags = mean_lags
+        self.rescale = rescale
+        self.horizon = horizon
+        self.output = output
+        self.fit_options = fit_options
+        self.last_observation_only = last_observation_only
+
+    # ---------- helpers ----------
+    @staticmethod
+    def _to_2d(X: Optional[ArrayLike]) -> Optional[np.ndarray]:
+        if X is None:
+            return None
+        X = np.asarray(X)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+        if X.ndim != 2:
+            raise ValueError("X must be 1D or 2D array-like.")
+        return X
+
+    @staticmethod
+    def _to_1d(y: ArrayLike) -> np.ndarray:
+        y = np.asarray(y)
+        if y.ndim != 1:
+            y = np.asarray(y).reshape(-1)
+        return y
+
+    def _build_x_3d(self, X_future: np.ndarray, horizon: int) -> np.ndarray:
         """
-        returns: full return series aligned with y_target (same length)
-
-        model_params: arbitrary arch_model parameters.
-            Common ones:
-                p, q, o, power
-                vol: 'GARCH', 'EGARCH', ...
-                dist: 'normal', 't', 'skewt', ...
-                mean: 'AR', 'ARX', 'Constant', ...
-                mean_lags: lags in the mean equation (we map to arch_model's `lags`)
-                rescale: True/False
+        arch expects x with shape (k_exog, horizon, n_scenarios).
+        For deterministic 1 scenario: (k, h, 1).
         """
-        self.returns = np.asarray(returns)
-
-        # Defaults; user can override any of these
-        defaults = {
-            "vol": "GARCH",
-            "p": 1,
-            "q": 1,
-            "dist": "t",
-            "mean": None,       # will be decided in fit() if not set
-            "mean_lags": 1,
-            "rescale": True,
-        }
-
-        # Merge defaults with user-provided parameters
-        self.params = {**defaults, **model_params}
-
-        self._res = None
-        self._train_len = None
-
-    def fit(self, y_train, X_train=None):
-        """
-        y_train: training slice of the TARGET (e.g. RV) — only used for length
-        X_train: exogenous regressors for the mean equation, already aligned
-        """
-        n_train = len(y_train)
-        self._train_len = n_train
-
-        r_train = self.returns[:n_train]
-
-        # Copy params so we can tweak without mutating self.params
-        params = self.params.copy()
-
-        # Extract mean_lags and map to arch_model's `lags`
-        mean_lags = params.pop("mean_lags", 1)
-
-        # Decide mean if user didn't specify explicitly
-        if "mean" not in params or params["mean"] is None:
-            if X_train is not None:
-                params["mean"] = "ARX"
-            else:
-                params["mean"] = "AR"
-
-
-    
-
-        if X_train is not None:
-            X_train = np.asarray(X_train)
-            am = arch_model(
-                r_train,
-                lags=mean_lags,
-                x=X_train,   # exogenous in mean
-                **params     # e.g. vol, p, q, dist, rescale, etc.
+        if X_future.shape[0] != horizon:
+            raise ValueError(
+                f"X_test must have {horizon} rows for horizon={horizon}, "
+                f"got {X_future.shape[0]}."
             )
-        else:
-            am = arch_model(
-                r_train,
-                lags=mean_lags,
-                **params
-            )
+        k = X_future.shape[1]
+        x_3d = np.transpose(X_future[:, :, None], (1, 0, 2))  # (h,k,1)->(k,h,1)
+        return x_3d.astype(float, copy=False)
 
-        self._res = am.fit(disp="off")
-        return self._res
+    # ---------- sklearn API ----------
+    def fit(self, y: ArrayLike, X: Optional[ArrayLike] = None, *, returns: ArrayLike):
+        """
+        Parameters
+        ----------
+        y : array-like, shape (n_samples,)
+            Target series (only length is used to align returns).
+        X : array-like, shape (n_samples, n_features), optional
+            Exogenous regressors for mean equation (ARX).
+        returns : array-like, shape (n_samples_total,)
+            Full return series aligned with y. We fit on returns[:len(y)].
 
-    def summary(self,):
+        Returns
+        -------
+        self
+        """
+        y = self._to_1d(y)
+        X = self._to_2d(X)
 
-        return self.summary()
+        returns = self._to_1d(returns)
+        n = len(y)
+        if len(returns) < n:
+            raise ValueError(f"returns length ({len(returns)}) < y length ({n}).")
 
-    def predict(self, X_test=None):
-        if self._res is None:
+        r_train = returns[:n]
+
+        mean = self.mean
+        if mean is None:
+            mean = "ARX" if X is not None else "AR"
+
+        # Build and fit model
+        self.model_ = arch_model(
+            r_train,
+            mean=mean,
+            lags=self.mean_lags,
+            x=X,
+            vol=self.vol,
+            p=self.p,
+            o=self.o,
+            q=self.q,
+            power=self.power,
+            dist=self.dist,
+            rescale=self.rescale,
+        )
+
+        fit_opts = {"disp": "off"}
+        if self.fit_options:
+            fit_opts.update(self.fit_options)
+
+        self.result_ = self.model_.fit(**fit_opts)
+        self.n_train_ = n
+        self.mean_ = mean
+        self.k_exog_ = 0 if X is None else X.shape[1]
+        return self
+
+    def predict(self, X: Optional[ArrayLike] = None, *, horizon: Optional[int] = None) -> np.ndarray:
+        """
+        Forecast conditional variance (or volatility) for `horizon` steps ahead.
+
+        If X is provided (ARX), then X must have shape (horizon, k_exog)
+        for multi-step forecasts, or (k_exog,) / (1, k_exog) for horizon=1.
+
+        Returns
+        -------
+        np.ndarray
+            Shape (horizon,) if horizon>1 else shape (1,)
+        """
+        if not hasattr(self, "result_"):
             raise RuntimeError("Call fit() before predict().")
 
-        if X_test is not None:
-            X_test = np.asarray(X_test)
-            # single 1-step forecast
-            if X_test.ndim == 1:
-                X_test = X_test.reshape(1, -1)
-            if X_test.shape[0] != 1:
-                raise ValueError("With exogenous regressors, only 1-step forecasts are supported.")
-            n_exog = X_test.shape[1]
+        h = int(self.horizon if horizon is None else horizon)
+        if h < 1:
+            raise ValueError("horizon must be >= 1.")
 
-            x_3d = np.empty((n_exog, 1, 1), dtype=float)
-            for j in range(n_exog):
-                x_3d[j, 0, 0] = X_test[0, j]
+        if self.k_exog_ > 0:
+            Xf = self._to_2d(X)
+            if Xf is None:
+                raise ValueError("Model was fit with exogenous regressors, but X_test is None.")
 
-            f = self._res.forecast(horizon=1, x=x_3d)
+            # allow providing a single row for h=1
+            if h == 1 and Xf.shape[0] != 1:
+                # if user passed a vector (k,), _to_2d makes it (n,1) so this is a real mismatch
+                raise ValueError(f"For horizon=1, X_test must have 1 row; got {Xf.shape[0]}.")
+
+            # require matching number of columns
+            if Xf.shape[1] != self.k_exog_:
+                raise ValueError(f"X_test has {Xf.shape[1]} features, expected {self.k_exog_}.")
+
+            if h == 1 and Xf.shape[0] == 1:
+                x_3d = self._build_x_3d(Xf, horizon=1)
+            else:
+                x_3d = self._build_x_3d(Xf, horizon=h)
+
+            f = self.result_.forecast(horizon=h, x=x_3d)
         else:
-            f = self._res.forecast(horizon=1)
+            if X is not None:
+                # ignore silently? better to be strict
+                raise ValueError("Model was fit without exogenous regressors; X_test should be None.")
+            f = self.result_.forecast(horizon=h)
 
+        # f.variance is a (t, h) DataFrame; take last available t by default.
+        var_path = f.variance.values  # shape (t, h)
+        var_h = var_path[-1, :] if self.last_observation_only else var_path[:, :]
 
-        # last row, 1-step ahead variance
-        return float(f.variance.values[-1, 0])
+        if self.output == "volatility":
+            out = np.sqrt(var_h)
+        else:
+            out = var_h
 
+        return np.asarray(out, dtype=float).reshape(-1)
 
+    def score(self, y_true: ArrayLike, y_pred: ArrayLike) -> float:
+        """
+        Default sklearn score: higher is better.
+        We return negative MSE (so lower error -> higher score).
+        """
+        y_true = self._to_1d(y_true)
+        y_pred = self._to_1d(y_pred)
+        return -mean_squared_error(y_true, y_pred)
 
+    def summary(self) -> str:
+        if not hasattr(self, "result_"):
+            raise RuntimeError("Call fit() before summary().")
+        return str(self.result_.summary())
