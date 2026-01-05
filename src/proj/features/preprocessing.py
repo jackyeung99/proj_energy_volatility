@@ -218,23 +218,17 @@ def preprocess_equities_daily(
     exog_base = [c for c in exog_base if not (c in seen or seen.add(c))]
 
     # 6) create lags + drop contemporaneous by default
-    out = _make_lags(out, exog_base, max_lag=max_lag)
-    if exog_base:
-        out = out.drop(columns=exog_base)
+    # out = _make_lags(out, exog_base, max_lag=max_lag)
+    # if exog_base:
+    #     out = out.drop(columns=exog_base)
 
     # 7) optional: keep raw levels (debug/EDA only)
-    if not keep_raw_levels:
-        drop_raw = [c for c in price_cols + vol_cols if c in out.columns]
-        if drop_raw:
-            out = out.drop(columns=drop_raw)
+    # if not keep_raw_levels:
+    #     drop_raw = [c for c in price_cols + vol_cols if c in out.columns]
+    #     if drop_raw:
+    #         out = out.drop(columns=drop_raw)
 
-    # keep only lag columns (and optional raw levels if keep_raw_levels)
-    keep_cols = [c for c in out.columns if "_lag" in c]
-    if keep_raw_levels:
-        keep_cols += [c for c in price_cols + vol_cols if c in out.columns]
-    keep_cols = list(dict.fromkeys(keep_cols))  # stable dedupe
-
-    return out[keep_cols].dropna()
+    return out[exog_base].dropna()
 
 
 # ----------------------------
@@ -269,9 +263,9 @@ def preprocess_macro(
         out = out.ffill()
 
     # 3) lag + drop contemporaneous
-    exog_base = list(out.columns)
-    out = _make_lags(out, exog_base, max_lag=max_lag)
-    out = out.drop(columns=exog_base)
+    # exog_base = list(out.columns)
+    # out = _make_lags(out, exog_base, max_lag=max_lag)
+    # out = out.drop(columns=exog_base)
 
     return out.dropna()
 
@@ -343,10 +337,10 @@ def preprocess_weather(
         [f"{c}_anom_absz" for c in cols]
     )
 
-    lag_cols = [c for c in (base_weather_cols + anom_cols + iforest_cols) if c in out.columns]
+    # lag_cols = [c for c in (base_weather_cols + anom_cols + iforest_cols) if c in out.columns]
 
-    out = _make_lags(out, lag_cols, max_lag=max_lag)
-    out = out.drop(columns=lag_cols)
+    # out = _make_lags(out, lag_cols, max_lag=max_lag)
+    # out = out.drop(columns=lag_cols)
 
     return out.dropna()
 

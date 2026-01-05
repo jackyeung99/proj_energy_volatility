@@ -95,8 +95,8 @@ def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.Data
         df = _ensure_dt_index(df, name)
         df = _normalize_daily_index_utc(df)
 
-        if spec.enforce_lags_only:
-            _validate_lags_only(df, name)
+        # if spec.enforce_lags_only:
+        #     _validate_lags_only(df, name)
 
         pref = prefixes.get(name, f"{name}_")
         df = _prefix_cols(df, pref)

@@ -36,7 +36,7 @@ def compute_zscore_anomaly(
         return (s - mu) / (sd + eps)
 
     if method == "doy_robust":
-        doy = s.index.dayofyear
+        doy = s.index.month
 
         # seasonal baseline: median per day-of-year
         med = s.groupby(doy).transform("median")

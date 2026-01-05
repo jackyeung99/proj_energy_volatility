@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
 
@@ -9,8 +10,6 @@ def walkforward_points(n: int, initial_train: int, step: int = 1):
         raise ValueError("initial_train must be in [1, n-1]")
     for t in range(initial_train, n, step):
         yield t, t  # train is [0:t), test is [t]
-import numpy as np
-import pandas as pd
 
 def evaluate_models(bt, models):
     """

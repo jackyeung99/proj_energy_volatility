@@ -66,14 +66,14 @@ def compute_fetch_window(
     # 2) production logic
     if mode == "full":
         # choose whatever makes sense for your dataset
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        start = now - timedelta(days=365 * 2)
         end = now
         return start, end
 
     if mode == "append":
         if last_date is None:
             # first run; define a sensible default
-            start = now - timedelta(days=365)
+            start = now - timedelta(days=365 * 2)
         else:
             start = last_date - timedelta(days=lookback_days)
         end = now
