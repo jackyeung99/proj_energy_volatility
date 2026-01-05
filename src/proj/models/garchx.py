@@ -8,10 +8,9 @@ from .base import VolatilityModel
 class GARCHProxyX(VolatilityModel):
     """
     Two-step model:
-      Step 1: Fit GARCH on returns -> sigma2_hat
-      Step 2: Predict log RV using log sigma2_hat, lagged log RV, and X (lagged)
-
-    Forecast output: variance (RV forecast).
+      1) Fit GARCH on returns -> sigma2_t (filtered)
+      2) Fit log(RV_t) ~ log(sigma2_t) + log(RV_{t-1}) + X_{t-1}
+    Outputs variance forecasts (in RV units).
     """
     def __init__(self, p=1, q=1, dist="t", x_cols=None):
         self.p = p
@@ -26,61 +25,73 @@ class GARCHProxyX(VolatilityModel):
     def name(self):
         return f"GARCHProxyX({self.p},{self.q},{self.dist},X={len(self.x_cols)})"
 
-    def fit(self, data: pd.DataFrame):
-        r = data["ret_idio"]
+    def _build_reg_df(self, data: pd.DataFrame, log_sigma2: pd.Series) -> pd.DataFrame:
+        """
+        Build regression dataframe aligned to data index.
+        """
         rv = data["rv_idio"]
+        df = pd.DataFrame(index=data.index)
+        df["y"] = np.log(rv)
+        df["log_sigma2"] = log_sigma2
+        df["log_rv_lag1"] = np.log(rv.shift(1))
 
-        # Step 1: GARCH on returns
+        for col in self.x_cols:
+            df[col] = data[col].shift(1)
+
+        return df
+
+    def fit(self, data: pd.DataFrame):
+        # ---- Step 1: fit GARCH on returns (training window)
+        r = data["ret_idio"]
         self._garch_res = arch_model(
             r, mean="zero", vol="GARCH",
             p=self.p, q=self.q, dist=self.dist, rescale=True
         ).fit(disp="off")
 
         sigma2 = (self._garch_res.conditional_volatility ** 2)
-        log_sigma2 = np.log(sigma2)
+        sigma2 = pd.Series(sigma2, index=data.index, name="sigma2")
+        log_sigma2 = np.log(sigma2.replace(0, np.nan))
 
-        # Step 2: OLS on log RV with lagged predictors
-        df = pd.DataFrame({
-            "y": np.log(rv),
-            "log_sigma2": log_sigma2,
-            "log_rv_lag1": np.log(rv.shift(1)),
-        })
-
-        for col in self.x_cols:
-            df[col] = data[col].shift(1)
-
-        df = df.dropna()
-        X = sm.add_constant(df.drop(columns=["y"]))
-        y = df["y"]
+        # ---- Step 2: OLS on log RV with lagged predictors + X
+        reg = self._build_reg_df(data, log_sigma2).dropna()
+        X = sm.add_constant(reg.drop(columns=["y"]))
+        y = reg["y"]
 
         self._ols_res = sm.OLS(y, X).fit()
         self._ols_params = self._ols_res.params
+
+        # ---- In-sample fitted variance series (aligned to training index)
+        fitted_log = self._ols_res.fittedvalues
+        fitted_var = np.exp(fitted_log)
+        self.fitted_variance_ = fitted_var.reindex(data.index)
+
         return self
 
     def forecast(self, data: pd.DataFrame) -> pd.Series:
-        # Recompute sigma2 using the fitted GARCH recursion requires re-filtering,
-        # but simplest is to use in-sample conditional volatility from fit period.
-        # For 1-step-ahead backtesting, pass data as train+test and refit in outer loop.
-        # Here we rely on refitting each outer step (standard in rolling backtests).
+        """
+        Return variance forecasts aligned to `data` index.
+        IMPORTANT: This method assumes you're refitting the whole model in the outer loop
+        (rolling/expanding backtest). If you are NOT refitting, you must supply
+        sigma2 computed using the fitted GARCH parameters (requires a custom filter).
+        """
+        if self._ols_params is None:
+            raise RuntimeError("Call fit() before forecast().")
 
-        # Fit-step produces sigma2 aligned to data passed into fit()
-        # In forecast(), we build the design matrix for all rows and output exp(Xb).
-        rv = data["rv_idio"]
-        # We need sigma2 for this data slice, so re-fit a GARCH filter quickly:
+        # Re-fit GARCH on the provided slice to get sigma2 aligned to this slice.
+        # (Consistent with your rolling refit setup.)
         r = data["ret_idio"]
         garch_res = arch_model(
-            r, mean="zero", vol="GARCH", p=self.p, q=self.q, dist=self.dist, rescale=True
+            r, mean="zero", vol="GARCH",
+            p=self.p, q=self.q, dist=self.dist, rescale=True
         ).fit(disp="off")
 
         sigma2 = (garch_res.conditional_volatility ** 2)
-        log_sigma2 = np.log(sigma2)
+        sigma2 = pd.Series(sigma2, index=data.index, name="sigma2")
+        log_sigma2 = np.log(sigma2.replace(0, np.nan))
 
-        Xf = pd.DataFrame({
-            "log_sigma2": log_sigma2,
-            "log_rv_lag1": np.log(rv.shift(1)),
-        })
-        for col in self.x_cols:
-            Xf[col] = data[col].shift(1)
+        regf = self._build_reg_df(data, log_sigma2)
+        Xf = sm.add_constant(regf.drop(columns=["y"]), has_constant="add")
 
-        Xf = sm.add_constant(Xf)
-        return np.exp(Xf @ self._ols_params)
+        # exp(Xb) gives variance forecast in RV units
+        yhat = np.exp(Xf @ self._ols_params)
+        return yhat

@@ -13,11 +13,13 @@ class GARCHModel(VolatilityModel):
         return f"GARCH({self.p},{self.q})"
 
     def fit(self, data):
-        r = data["ret_idio"]
+        r = data["ret"]
         self.res = arch_model(
             r, mean="zero", vol="GARCH",
             p=self.p, q=self.q, dist="t"
         ).fit(disp="off")
+        self.fitted_variance_ = (self.res.conditional_volatility ** 2)
+        self.fitted_variance_.index = data.index  # ensure aligned
         return self
 
     def forecast(self, data):
