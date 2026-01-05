@@ -1,73 +1,86 @@
+# models/garch_x_proxy.py
 import numpy as np
-from arch.univariate import GARCH
+import pandas as pd
+import statsmodels.api as sm
+from arch import arch_model
+from .base import VolatilityModel
 
-
-class GARCHX(GARCH):
+class GARCHProxyX(VolatilityModel):
     """
-    GARCH-X volatility model:
+    Two-step model:
+      Step 1: Fit GARCH on returns -> sigma2_hat
+      Step 2: Predict log RV using log sigma2_hat, lagged log RV, and X (lagged)
 
-        sigma_t^power = omega
-                        + sum alpha_i * |eps_{t-i}|^power
-                        + sum beta_j * sigma_{t-j}^power
-                        + gamma' x_t
-
-    where x_t are exogenous regressors for the volatility equation.
+    Forecast output: variance (RV forecast).
     """
+    def __init__(self, p=1, q=1, dist="t", x_cols=None):
+        self.p = p
+        self.q = q
+        self.dist = dist
+        self.x_cols = x_cols or []
+        self._garch_res = None
+        self._ols_res = None
+        self._ols_params = None
 
-    def __init__(self, p=1, q=1, x=None, power=2.0):
-        super().__init__(p=p, o=0, q=q, power=power)
+    @property
+    def name(self):
+        return f"GARCHProxyX({self.p},{self.q},{self.dist},X={len(self.x_cols)})"
 
-        if x is None:
-            raise ValueError("You must supply exogenous regressors x for GARCH-X.")
+    def fit(self, data: pd.DataFrame):
+        r = data["ret_idio"]
+        rv = data["rv_idio"]
 
-        x = np.asarray(x)
-        if x.ndim == 1:
-            x = x[:, None]  # convert to 2D (T, 1)
+        # Step 1: GARCH on returns
+        self._garch_res = arch_model(
+            r, mean="zero", vol="GARCH",
+            p=self.p, q=self.q, dist=self.dist, rescale=True
+        ).fit(disp="off")
 
-        self.x = x
-        self.kx = x.shape[1]  # number of exogenous regressors
+        sigma2 = (self._garch_res.conditional_volatility ** 2)
+        log_sigma2 = np.log(sigma2)
 
-        # Original GARCH has params: omega + p alphas + q betas
-        # GARCH-X adds kx gamma parameters
-        self._num_params = 1 + p + q + self.kx
-        self._name = "GARCHX"
+        # Step 2: OLS on log RV with lagged predictors
+        df = pd.DataFrame({
+            "y": np.log(rv),
+            "log_sigma2": log_sigma2,
+            "log_rv_lag1": np.log(rv.shift(1)),
+        })
 
-    # -------------------------------------------------------------
-    def parameter_names(self):
-        base = super().parameter_names()
-        gammas = [f"gamma[{i+1}]" for i in range(self.kx)]
-        return base + gammas
+        for col in self.x_cols:
+            df[col] = data[col].shift(1)
 
-    # -------------------------------------------------------------
-    def compute_variance(self, parameters, resids, sigma2, backcast, var_bounds):
-        power = self.power
-        p, q = self.p, self.q
-        x = self.x
+        df = df.dropna()
+        X = sm.add_constant(df.drop(columns=["y"]))
+        y = df["y"]
 
-        nobs = len(resids)
-        abs_eps_pow = np.abs(resids)**power
+        self._ols_res = sm.OLS(y, X).fit()
+        self._ols_params = self._ols_res.params
+        return self
 
-        omega = parameters[0]
-        alpha = parameters[1 : 1+p]
-        beta  = parameters[1+p : 1+p+q]
-        gamma = parameters[1+p+q : 1+p+q+self.kx]
+    def forecast(self, data: pd.DataFrame) -> pd.Series:
+        # Recompute sigma2 using the fitted GARCH recursion requires re-filtering,
+        # but simplest is to use in-sample conditional volatility from fit period.
+        # For 1-step-ahead backtesting, pass data as train+test and refit in outer loop.
+        # Here we rely on refitting each outer step (standard in rolling backtests).
 
-        # variance in power domain
-        s = np.zeros(nobs)
-        s[0] = float(backcast)
+        # Fit-step produces sigma2 aligned to data passed into fit()
+        # In forecast(), we build the design matrix for all rows and output exp(Xb).
+        rv = data["rv_idio"]
+        # We need sigma2 for this data slice, so re-fit a GARCH filter quickly:
+        r = data["ret_idio"]
+        garch_res = arch_model(
+            r, mean="zero", vol="GARCH", p=self.p, q=self.q, dist=self.dist, rescale=True
+        ).fit(disp="off")
 
-        for t in range(1, nobs):
-            arch_part = sum(alpha[i] * abs_eps_pow[t-1-i]
-                            for i in range(p) if t-1-i >= 0)
-            garch_part = sum(beta[j] * s[t-1-j]
-                             for j in range(q) if t-1-j >= 0)
-            x_part = float(np.dot(gamma, x[t]))
+        sigma2 = (garch_res.conditional_volatility ** 2)
+        log_sigma2 = np.log(sigma2)
 
-            st = omega + arch_part + garch_part + x_part
-            st = np.clip(st, var_bounds[t, 0], var_bounds[t, 1])
+        Xf = pd.DataFrame({
+            "log_sigma2": log_sigma2,
+            "log_rv_lag1": np.log(rv.shift(1)),
+        })
+        for col in self.x_cols:
+            Xf[col] = data[col].shift(1)
 
-            s[t] = st
-
-        inv_power = 2.0 / power
-        sigma2[:] = s**inv_power
-        return sigma2
+        Xf = sm.add_constant(Xf)
+        return np.exp(Xf @ self._ols_params)

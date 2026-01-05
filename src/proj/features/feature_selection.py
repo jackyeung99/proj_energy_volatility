@@ -9,7 +9,7 @@ from proj.evaluation.backtesting import rolling_forecast_backtest, evaluate_perf
 import pandas as pd
 
 
-def greedy_feature_selection(model_cls, model_params, X, y, returns, feature_lim=3, train_size=0.8, horizon=1, verbose=True):
+def greedy_feature_selection(model, model_params, X, y, returns, feature_lim=3, train_size=0.8, horizon=1, verbose=True):
     """
     Greedy forward feature selection based on the 'qlike' metric (lower is better),
     compatible with the new GARCHRegressor API (returns passed to fit()).
