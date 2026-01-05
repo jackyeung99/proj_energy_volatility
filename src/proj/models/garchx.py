@@ -29,7 +29,7 @@ class GARCHProxyX(VolatilityModel):
         """
         Build regression dataframe aligned to data index.
         """
-        rv = data["rv_idio"]
+        rv = data["rv"]
         df = pd.DataFrame(index=data.index)
         df["y"] = np.log(rv)
         df["log_sigma2"] = log_sigma2
@@ -42,7 +42,7 @@ class GARCHProxyX(VolatilityModel):
 
     def fit(self, data: pd.DataFrame):
         # ---- Step 1: fit GARCH on returns (training window)
-        r = data["ret_idio"]
+        r = data["ret"]
         self._garch_res = arch_model(
             r, mean="zero", vol="GARCH",
             p=self.p, q=self.q, dist=self.dist, rescale=True
@@ -79,7 +79,7 @@ class GARCHProxyX(VolatilityModel):
 
         # Re-fit GARCH on the provided slice to get sigma2 aligned to this slice.
         # (Consistent with your rolling refit setup.)
-        r = data["ret_idio"]
+        r = data["ret"]
         garch_res = arch_model(
             r, mean="zero", vol="GARCH",
             p=self.p, q=self.q, dist=self.dist, rescale=True
