@@ -6,6 +6,7 @@ from typing import Any, Optional
 import json
 import uuid
 
+import s3fs
 import pandas as pd
 
 
@@ -86,7 +87,6 @@ class S3Storage(Storage):
         if self._fs is not None:
             return
 
-        import s3fs
 
         client_kwargs = {}
         if self.region:

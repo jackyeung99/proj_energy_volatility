@@ -1,7 +1,6 @@
-enabled: False
 
 ingestion:
-  mode: full  # full or append
+  mode: append  # full or append
   lookback_days: 1
   # start: "2024-01-01T00:00:00Z"
   # end:   "2024-12-31T23:59:59Z"
@@ -24,7 +23,7 @@ sources:
     interval: "1d"
 
   macro:
-    enabled: true
+    enabled: false
     store_path: bronze/macro.parquet
     provider: fred
     series: 

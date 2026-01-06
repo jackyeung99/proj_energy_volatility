@@ -79,8 +79,8 @@ def preprocess_equities(
     log_eps = float(source_cfg.get("log_eps", 1e-12))
 
     # 1) Intraday log returns
-    out["XLE_r"] = transforms.log_returns(out, "XLE")
-    out["SPY_r"] = transforms.log_returns(out, "SPY")
+    out["XLE_r"] = transforms.log_returns(out, "XLE") * 100
+    out["SPY_r"] = transforms.log_returns(out, "SPY") * 100
     out = out.dropna(subset=["XLE_r", "SPY_r"])
 
     # 2) Intraday idiosyncratic residuals
@@ -321,21 +321,27 @@ def preprocess_weather(
 
     # 3) multivariate isolation forest on z-space
     if enable_iforest:
-        # ensure these exist, then include them in lagging
-        iforest_cols = []
-        for c in ["weather_iforest_score", "weather_iforest_flag"]:
-            if c in out.columns:
-                iforest_cols.append(c)
-    else:
-        iforest_cols = []
+        z_cols = [f"{c}_anom_z" for c in cols]
+
+        iso_out = anomaly_detection.compute_isolated_forest_anomaly(
+            df=out,
+            cols=z_cols,
+            contamination=contamination,   # define in your config or set a default
+            random_state=random_state,     # define in your config or set a default
+        )
+
+        # attach the multivariate outputs (single set of columns)
+        out["weather_iforest_score"] = iso_out["weather_iforest_score"]
+        out["weather_iforest_flag"]  = iso_out["weather_iforest_flag"]
+
         
     # 4) lag anomaly features only, then drop contemporaneous
-    base_weather_cols = [c for c in cols if c in out.columns]
+    # base_weather_cols = [c for c in cols if c in out.columns]
 
-    anom_cols = (
-        [f"{c}_anom_z" for c in cols] +
-        [f"{c}_anom_absz" for c in cols]
-    )
+    # anom_cols = (
+    #     [f"{c}_anom_z" for c in cols] +
+    #     [f"{c}_anom_absz" for c in cols]
+    # )
 
     # lag_cols = [c for c in (base_weather_cols + anom_cols + iforest_cols) if c in out.columns]
 

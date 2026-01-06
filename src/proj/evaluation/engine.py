@@ -1,5 +1,5 @@
 import pandas as pd
-import numpy
+import numpy as np
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
 
@@ -45,7 +45,6 @@ def evaluate_models(bt, models):
 
     return pd.DataFrame(rows).sort_values("qlike").reset_index(drop=True)
 
-d
 def model_selection(backtester, models):
     """
     Score a list of models using the backtester.

@@ -1,11 +1,20 @@
-
 storage:
   backend: local
   base_dir: data
 
 steps:
-  ingestion: configs/steps/ingest.yaml
-  features: configs/steps/build_features.yaml
-  merge: configs/steps/merge.yaml
-  training: configs/steps/training.yaml
-  prediction: configs/steps/prediction.yaml
+  ingestion:
+    enabled: false
+    config: configs/steps/ingest.yaml
+
+  features:
+    enabled: false
+    config: configs/steps/build_features.yaml
+
+  merge:
+    enabled: false
+    config: configs/steps/merge.yaml
+
+  prediction:
+    enabled: true
+    config: configs/steps/prediction.yaml

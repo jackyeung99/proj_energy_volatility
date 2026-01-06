@@ -4,9 +4,10 @@ from arch import arch_model
 from .base import VolatilityModel
 
 class GARCHModel(VolatilityModel):
-    def __init__(self, p=1, q=1):
+    def __init__(self, p=1, q=1, dist="t"):
         self.p = p
         self.q = q
+        self.dist = dist
 
     @property
     def name(self):
@@ -16,7 +17,7 @@ class GARCHModel(VolatilityModel):
         r = data["ret"]
         self.res = arch_model(
             r, mean="zero", vol="GARCH",
-            p=self.p, q=self.q, dist="t"
+            p=self.p, q=self.q, dist=self.dist
         ).fit(disp="off")
         self.fitted_variance_ = (self.res.conditional_volatility ** 2)
         self.fitted_variance_.index = data.index  # ensure aligned

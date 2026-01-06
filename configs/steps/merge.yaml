@@ -1,13 +1,22 @@
-enabled: true
 
 merge_gold:
-  enabled: true
 
   inputs:
-    equities: silver/equities.parquet
-    equities_daily: silver/equities_daily.parquet
-    macro: silver/macro.parquet
-    weather: silver/weather.parquet
+    equities:
+      enabled: true
+      path: silver/equities.parquet
+
+    equities_daily:
+      enabled: true
+      path: silver/equities_daily.parquet
+
+    macro:
+      enabled: false
+      path: silver/macro.parquet
+
+    weather:
+      enabled: true
+      path: silver/weather.parquet
 
   merge:
     anchor: equities
@@ -15,7 +24,7 @@ merge_gold:
 
     dropna_target: true
     target_cols:
-      - log_rv_idio
+      - log_rv_xle
 
     start_date: null
     end_date: null

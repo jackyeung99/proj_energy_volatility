@@ -21,8 +21,6 @@ def merge_data(storage, global_cfg: dict, step_cfg: dict) -> dict:
       dict with metadata (rows/cols/output_path)
     """
     cfg = step_cfg["merge_gold"]
-    if not cfg.get("enabled", True):
-        return {"enabled": False, "skipped": True}
 
     # -------------------------
     # Load inputs
@@ -30,7 +28,15 @@ def merge_data(storage, global_cfg: dict, step_cfg: dict) -> dict:
     inputs: Dict[str, str] = cfg["inputs"]
     datasets: Dict[str, pd.DataFrame] = {}
 
-    for name, path in inputs.items():
+    for name, spec in inputs.items():
+        enabled = spec.get("enabled", True)
+        path = spec.get("path")
+
+        if not enabled:
+            print(f"    [SKIP INPUT] {name}")
+            continue
+
+
         df = storage.read_parquet(path)
         if df is None or not isinstance(df, pd.DataFrame) or df.empty:
             raise ValueError(f"merge_gold: input '{name}' at '{path}' is empty or not a DataFrame")

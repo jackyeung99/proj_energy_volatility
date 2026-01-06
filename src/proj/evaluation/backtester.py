@@ -1,7 +1,7 @@
 # evaluation/backtester.py
 import pandas as pd
-from .engine import walkforward_points
-from .metrics import qlike
+from proj.evaluation.engine import walkforward_points
+from proj.evaluation.metrics import qlike
 
 class Backtester:
     """

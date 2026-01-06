@@ -9,6 +9,7 @@ from proj.data.storage import Storage
 
 from proj.data.merge_helpers import merge_and_dedup
 
+from datetime import datetime, timezone, timedelta
 
 def fetch_by_source(source_name: str, fetch_start, fetch_end, source_cfg: dict):
     """
@@ -77,7 +78,10 @@ def ingest_one_source(
     # 1) last date (per source)
     last_date = get_last_available_date(storage, store_key)
 
+
     print(f"The current data is up to : {last_date} ")
+
+
     # 2) compute window (per source)
     # Optional overrides for testing
     start_override = pd.to_datetime(base_ingest_cfg.get("start"), utc=True) # parse

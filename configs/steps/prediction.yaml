@@ -1,1 +1,58 @@
-enabled: false
+run:
+  name: predict_next_day
+  timezone: America/New_York
+  horizon: 1   # 1-step-ahead
+
+data:
+  data_dir: gold/modeling_table.parquet
+  store_path: results/results.parquet
+
+  # Columns in the modeling table
+  returns_col: ret_xle
+  realized_var_col: rv_xle
+
+  # Optional exogenous regressors for HAR-RV-X
+  exog_cols:
+    - etf_log_^OVX
+    - wx_weather_iforest_flag
+
+  train_window:
+    mode: rolling         # rolling | expanding
+    rolling_days: 1460    # ~4 years
+    min_obs: 365          # ~1 year minimum
+
+models:
+  - type: ewma
+    name: EWMA_094
+    enabled: true
+    params:
+      lam: 0.94
+      input_type: 'variance'
+
+  - type: garch
+    name: GARCH_11
+    enabled: true
+    params:
+      p: 1
+      q: 1
+      mean: Zero
+      dist: t
+    fit_options:
+      disp: off
+      rescale: true
+
+  - type: har_rv
+    name: HAR_RV_X
+    enabled: true
+    params:
+      # use the exog cols above for HAR-RV-X
+      x_cols:
+        - etf_log_^OVX
+        - wx_weather_iforest_flag
+    options:
+      log_eps: 1.0e-12
+
+runtime:
+  fail_fast: true
+  log_level: INFO
+  write_intermediate: false
