@@ -1,0 +1,10 @@
+{
+  "config_fingerprint": "7fc19c09347c8969982dd268f10ee0473b4e5e40676686a5eb11c2ff9397cf5d",
+  "dataset_end": "2026-01-06T19:30:00+00:00",
+  "dataset_start": "2024-01-08T14:30:00+00:00",
+  "last_success_utc": "2026-01-06T19:58:25.660561+00:00",
+  "pull_end": "2026-01-06T19:58:25.067956+00:00",
+  "pull_start": "2026-01-05T18:30:00+00:00",
+  "rows_written": 9,
+  "store_key": "bronze/equities.parquet"
+}

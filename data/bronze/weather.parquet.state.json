@@ -1,0 +1,10 @@
+{
+  "config_fingerprint": "7ce872a8ee9f9a4b21a655026e24780d473e3d56111926954dba7bbf574746aa",
+  "dataset_end": "2026-01-06T00:00:00+00:00",
+  "dataset_start": "2024-01-07T00:00:00+00:00",
+  "last_success_utc": "2026-01-06T19:24:35.433679+00:00",
+  "pull_end": "2026-01-06T19:24:24.693126+00:00",
+  "pull_start": "2024-01-07T19:24:24.693126+00:00",
+  "rows_written": 730,
+  "store_key": "bronze/weather.parquet"
+}

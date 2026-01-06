@@ -8,5 +8,5 @@ build/
 dist/
 *.egg-info/
 
-data/bronze/
-data/silver/
+# data/bronze/
+# data/silver/
