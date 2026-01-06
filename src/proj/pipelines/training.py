@@ -1,3 +1,6 @@
-def train():
+
+
+
+def train_all(models, storage):
 
     pass

@@ -1,8 +1,13 @@
 from __future__ import annotations
-from dataclasses import dataclass
+
+from dataclasses import dataclass, field
 from pathlib import Path
-import pandas as pd
+from typing import Any, Optional
 import json
+import uuid
+
+import pandas as pd
+
 
 class Storage:
     def exists(self, key: str) -> bool:
@@ -14,6 +19,12 @@ class Storage:
     def write_parquet(self, df: pd.DataFrame, key: str) -> None:
         raise NotImplementedError
 
+    def read_json(self, key: str) -> Any:
+        raise NotImplementedError
+
+    def write_json(self, obj: Any, key: str) -> None:
+        raise NotImplementedError
+
 
 @dataclass(frozen=True)
 class LocalStorage(Storage):
@@ -22,11 +33,9 @@ class LocalStorage(Storage):
     def _path(self, key: str) -> Path:
         return (self.base_dir / key).resolve()
 
-    # ---------- existence ----------
     def exists(self, key: str) -> bool:
         return self._path(key).exists()
 
-    # ---------- parquet ----------
     def read_parquet(self, key: str) -> pd.DataFrame:
         return pd.read_parquet(self._path(key))
 
@@ -37,51 +46,120 @@ class LocalStorage(Storage):
         df.to_parquet(tmp, index=True)
         tmp.replace(path)
 
-    # ---------- json ----------
-    def read_json(self, key: str):
-        """
-        Read JSON from local storage.
-        Returns dict / list / primitive depending on file contents.
-        """
+    def read_json(self, key: str) -> Any:
         path = self._path(key)
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
-    def write_json(self, obj, key: str) -> None:
-        """
-        Write JSON atomically (best-effort).
-        """
+    def write_json(self, obj: Any, key: str) -> None:
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
-
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(obj, f, indent=2, sort_keys=True, default=str)
-
         tmp.replace(path)
 
 
 @dataclass
-class S3Storage:
+class S3Storage(Storage):
+    """
+    S3-backed storage using s3fs/fsspec under the hood.
+
+    - key is a path relative to (bucket, prefix)
+      e.g. key="data/bronze/equities.parquet"
+    - best-effort "atomic" write:
+        write to temp key -> copy to final -> delete temp
+      (S3 doesn't support true atomic rename)
+    """
     bucket: str
     prefix: str = ""
 
-    def _uri(self, key: str) -> str:
+    # credential/config controls (optional)
+    region: Optional[str] = None
+    profile: Optional[str] = None
+    endpoint_url: Optional[str] = None  # for MinIO/localstack if needed
+
+    # internal cached fs (don’t pass in init)
+    _fs: Any = field(init=False, repr=False, default=None)
+
+    def _init_fs(self):
+        if self._fs is not None:
+            return
+
+        import s3fs
+
+        client_kwargs = {}
+        if self.region:
+            client_kwargs["region_name"] = self.region
+        if self.endpoint_url:
+            client_kwargs["endpoint_url"] = self.endpoint_url
+
+        # profile works locally (shared credentials); on ECS you typically won't set it
+        self._fs = s3fs.S3FileSystem(profile=self.profile, client_kwargs=client_kwargs)
+
+    def _key(self, key: str) -> str:
+        key = key.lstrip("/")
         pref = self.prefix.strip("/")
-        if pref:
-            return f"s3://{self.bucket}/{pref}/{key}"
-        return f"s3://{self.bucket}/{key}"
+        return f"{pref}/{key}" if pref else key
+
+    def _uri(self, key: str) -> str:
+        return f"s3://{self.bucket}/{self._key(key)}"
 
     def exists(self, key: str) -> bool:
-        import s3fs
-        fs = s3fs.S3FileSystem()
-        return fs.exists(self._uri(key))
+        self._init_fs()
+        return self._fs.exists(self._uri(key))
 
     def read_parquet(self, key: str) -> pd.DataFrame:
+        # pandas will use s3fs via fsspec if installed
         return pd.read_parquet(self._uri(key))
 
     def write_parquet(self, df: pd.DataFrame, key: str) -> None:
-        df.to_parquet(self._uri(key), index=False)
+        self._init_fs()
+        final_uri = self._uri(key)
+
+        # temp key alongside final
+        tmp_key = f"{self._key(key)}.__tmp__{uuid.uuid4().hex}"
+        tmp_uri = f"s3://{self.bucket}/{tmp_key}"
+
+        # write temp
+        df.to_parquet(tmp_uri, index=True)
+
+        # copy temp -> final (overwrite)
+        # s3fs expects "bucket/key" without s3:// for some ops
+        src = f"{self.bucket}/{tmp_key}"
+        dst = f"{self.bucket}/{self._key(key)}"
+        self._fs.copy(src, dst)
+
+        # cleanup temp
+        try:
+            self._fs.rm(src)
+        except Exception:
+            pass
+
+    def read_json(self, key: str) -> Any:
+        self._init_fs()
+        uri = self._uri(key)
+        with self._fs.open(uri, "r") as f:
+            return json.load(f)
+
+    def write_json(self, obj: Any, key: str) -> None:
+        self._init_fs()
+        final_uri = self._uri(key)
+
+        tmp_key = f"{self._key(key)}.__tmp__{uuid.uuid4().hex}"
+        tmp_uri = f"s3://{self.bucket}/{tmp_key}"
+
+        with self._fs.open(tmp_uri, "w") as f:
+            json.dump(obj, f, indent=2, sort_keys=True, default=str)
+
+        src = f"{self.bucket}/{tmp_key}"
+        dst = f"{self.bucket}/{self._key(key)}"
+        self._fs.copy(src, dst)
+
+        try:
+            self._fs.rm(src)
+        except Exception:
+            pass
 
 
 def make_storage(cfg: dict) -> Storage:
@@ -92,6 +170,17 @@ def make_storage(cfg: dict) -> Storage:
         return LocalStorage(base_dir=Path(s["base_dir"]))
 
     if backend == "s3":
-        return S3Storage(base_uri=s["base_uri"])
+        # prefer explicit bucket/prefix in config
+        # storage:
+        #   backend: s3
+        #   bucket: my-bucket
+        #   prefix: proj_energy_volatility
+        return S3Storage(
+            bucket=s["bucket"],
+            prefix=s.get("prefix", ""),
+            region=s.get("region"),
+            profile=s.get("profile"),           # local dev only typically
+            endpoint_url=s.get("endpoint_url"), # optional
+        )
 
     raise ValueError(f"Unknown storage.backend={backend!r}")
