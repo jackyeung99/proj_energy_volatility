@@ -16,6 +16,9 @@ from proj.models.harrv import HARRV
 from proj.models.base import VolatilityModel
 from proj.data.merge_helpers import merge_and_dedup
 
+import logging
+logger = logging.getLogger("proj.prediction")  
+
 ET = ZoneInfo("America/New_York")
 
 
@@ -122,7 +125,7 @@ def model_factory(model_spec: dict, data_cfg: dict) -> VolatilityModel:
     if mtype == "ewma":
         lam = float(params.get("lam", 0.94))
         input_type = params.get("input_type", returns_col)
-        return EWMAVariance(lam=.94, input_type=input_type)
+        return EWMAVariance(lam=lam, input_type=input_type)
 
     if mtype == "garch":
         p = int(params.get("p", 1))
@@ -234,6 +237,11 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
 
         model.fit(train_df)
         fc = model.forecast(train_df)
+
+        logging.debug("Model Name %s | Predicted Vol %s",
+                    model.name, 
+                    fc  
+                      )
 
         if not isinstance(fc, pd.Series):
             raise TypeError(f"{model.name}.forecast must return pd.Series, got {type(fc)}.")

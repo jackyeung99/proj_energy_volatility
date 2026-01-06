@@ -11,6 +11,10 @@ from proj.data.merge_helpers import merge_and_dedup
 
 from datetime import datetime, timezone, timedelta
 
+import logging
+logger = logging.getLogger("proj.ingestion")  # or proj.merge, etc.
+
+
 def fetch_by_source(source_name: str, fetch_start, fetch_end, source_cfg: dict):
     """
     Only fetch differs per source.
@@ -79,7 +83,13 @@ def ingest_one_source(
     last_date = get_last_available_date(storage, store_key)
 
 
-    print(f"The current data is up to : {last_date} ")
+    logging.info(
+        "SOURCE %s | data current through %s",
+        source_name,
+        last_date,
+    )
+
+
 
 
     # 2) compute window (per source)
@@ -98,7 +108,12 @@ def ingest_one_source(
         # freeze_now=... (optional)
     )
 
-    print(f" Pulling information from {fetch_start} to {fetch_end}")
+    logging.info(
+        "SOURCE %s | fetching data from %s to %s",
+        source_name,
+        fetch_start,
+        fetch_end,
+    )
 
     # # 3) fetch (only part that differs)
     new_df = fetch_by_source(source_name, fetch_start, fetch_end, source_cfg)
@@ -116,6 +131,12 @@ def ingest_one_source(
 
     storage.write_parquet(merged, store_key)
 
+    logging.info(
+        "SOURCE %s | rows written %s ",
+        source_name,
+        int(len(new_df))
+    )
+
     update_state(
         storage,
         store_key,
@@ -129,7 +150,7 @@ def ingest_one_source(
     return {
         "source": source_name,
         "store_key": store_key,
-        "rows_written": int(len(merged)),
+        "rows_written": int(len(new_df)),
         "last_timestamp": last_ts,
         "fetch_window": (fetch_start, fetch_end),
     }

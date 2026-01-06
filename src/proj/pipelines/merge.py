@@ -6,7 +6,8 @@ from typing import Any, Dict
 import pandas as pd
 
 from proj.data.merge_helpers import MergeSpec, merge_to_gold
-
+import logging
+logger = logging.getLogger("proj.merge")  
 
 def merge_data(storage, global_cfg: dict, step_cfg: dict) -> dict:
     """
@@ -33,7 +34,7 @@ def merge_data(storage, global_cfg: dict, step_cfg: dict) -> dict:
         path = spec.get("path")
 
         if not enabled:
-            print(f"    [SKIP INPUT] {name}")
+            logger.debug(f"    [SKIP INPUT] {name}")
             continue
 
 

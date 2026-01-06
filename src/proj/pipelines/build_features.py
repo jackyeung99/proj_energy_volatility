@@ -10,6 +10,9 @@ from proj.features.preprocessing import preprocess_equities, preprocess_equities
 from proj.data.storage import Storage
 
 
+import logging
+logger = logging.getLogger("proj.build_features")  
+
 
 
 def preprocess_by_source(source_name: str, df: pd.DataFrame, base_features_cfg: dict,  source_cfg: dict):
@@ -42,9 +45,12 @@ def preprocess_one_source(
     #perform transformations and pre processing
     new_df = preprocess_by_source(source_name, raw_df, base_features_cfg, source_cfg)
 
-    print("=" * 15, source_name, "=" * 15)
-    print(f"Length of Dataframe: {len(new_df)}")
-    print(new_df.head())
+    logging.info(
+        "SOURCE %s | length of preprocessed data %s",
+        source_name,
+        len(new_df)
+    )
+    
 
 
     store_key = source_cfg["store_path"]

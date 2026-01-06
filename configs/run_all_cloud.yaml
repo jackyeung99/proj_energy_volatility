@@ -1,22 +1,22 @@
 storage:
   backend: s3
   bucket: volatility-project
-  prefix: 
+  prefix: energy-vol-forecast
   region: us-east-2
 
 steps:
   ingestion:
     enabled: true
-    config: configs/steps/ingest.yaml
+    config: steps/ingest.yaml
 
   features:
     enabled: true
-    config: configs/steps/build_features.yaml
+    config: steps/build_features.yaml
 
   merge:
     enabled: true
-    config: configs/steps/merge.yaml
+    config: steps/merge.yaml
     
   prediction:
     enabled: true
-    config: configs/steps/prediction.yaml
+    config: steps/prediction.yaml

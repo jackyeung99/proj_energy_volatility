@@ -1,0 +1,16 @@
+arch
+ib_insync
+numpy
+openmeteo_requests
+pandas
+pandas_datareader
+requests
+retry_requests
+s3fs
+scikit-learn
+statsmodels
+xgboost
+PyYAML
+yfinance
+python-dateutil
+pyarrow
