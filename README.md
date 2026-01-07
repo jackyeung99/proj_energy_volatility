@@ -150,6 +150,15 @@ Secondary diagnostics include RMSE, forecast stability checks, and visual inspec
 ## Running the Pipeline
 
 ### Local Execution
-
+From the repository root, first set up the environment:
 ```bash
-python src/proj/pipelines/run_all.py --config configs/run_all.yaml
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
+```
+Then run the pipeline:
+```bash
+python src/proj/pipelines/run_all.py --cfg configs/run_all.yaml
+

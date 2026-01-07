@@ -45,7 +45,7 @@ def _fetch_one_chunk(ticker: str, cstart: pd.Timestamp, cend: pd.Timestamp, inte
         start=cstart.tz_convert(None),
         end=cend.tz_convert(None),
         interval=interval,
-        auto_adjust=False,
+        auto_adjust=True,
         actions=False,
         progress=False,
         threads=False,

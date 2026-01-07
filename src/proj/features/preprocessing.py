@@ -94,6 +94,8 @@ def preprocess_equities(
 
     # 4) Daily aggregation
     daily = out.resample(freq).agg(
+        close_xle=("XLE", "last"),
+        close_spy=("SPY", "last"),
         rv_xle=("xle_r_sq", "sum"),
         rv_spy=("spy_r_sq", "sum"),
         rv_idio=("idio_sq", "sum"),
