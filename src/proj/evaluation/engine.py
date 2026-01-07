@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Callable, Dict, List, Optional, Tuple, Any
-
+from proj.evaluation.metrics import rmse
 
 
 def walkforward_points(n: int, initial_train: int, step: int = 1):
@@ -36,10 +36,13 @@ def evaluate_models(bt, models):
         else:
             corr = np.nan
 
+        r = rmse(y, f)
+
         rows.append({
             "model": model.name,
             "qlike": q,
             "corr": corr,
+            "rmse": r,
             "n": int(mask.sum()),
         })
 
