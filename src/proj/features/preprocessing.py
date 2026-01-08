@@ -46,6 +46,15 @@ def _winsorize_series(s: pd.Series, p: float) -> pd.Series:
     lo, hi = s.quantile([p, 1 - p])
     return s.clip(lo, hi)
 
+def drop_outlier_intraday_returns(df: pd.DataFrame, cols: list[str], max_abs_return: float) -> pd.DataFrame:
+    """
+    Drops rows where ANY of the specified return columns exceeds max_abs_return in absolute value.
+    Returns are assumed to be in percent if you multiply by 100.
+    """
+    mask = pd.Series(True, index=df.index)
+    for c in cols:
+        mask &= df[c].abs() <= max_abs_return
+    return df.loc[mask]
 
 # ----------------------------
 # Equities: intraday -> daily realized measures
@@ -63,26 +72,30 @@ def preprocess_equities(
     """Daily realized measures from intraday prices; index stamped to ET close in UTC."""
 
     # =============================================================================
-    # 1) Validate + standardize index (tz-aware UTC)
-    # =============================================================================
-    out = df.copy().sort_index()
-    out = ensure_datetime_index_utc(out)
-
-
-    # =============================================================================
-    # 2) Config
+    # 1) Config
     # =============================================================================
     freq = base_features_cfg.get("resample_freq", "1D")          # daily buckets
     window = int(source_cfg.get("idio_window", 60))
     min_bins = int(source_cfg.get("min_intraday_bins", 1))
     log_eps = float(source_cfg.get("log_eps", 1e-12))
     close_et = time(*map(int, (source_cfg.get("market_close_et", "16:00")).split(":")))
+    max_abs = float(source_cfg.get("max_abs_intraday_ret_pct", 5.0))  
+
+    # =============================================================================
+    # 2) Validate + standardize index (tz-aware UTC)
+    # =============================================================================
+    out = df.copy().sort_index()
+    out = ensure_datetime_index_utc(out)
+    out = filter_rth(out)
+
 
     # =============================================================================
     # 3) Intraday features (returns, idio residuals, RV components)
     # =============================================================================
+
     out["XLE_r"] = transforms.log_returns(out, "XLE") * 100
     out["SPY_r"] = transforms.log_returns(out, "SPY") * 100
+    out = drop_outlier_intraday_returns(out, ["XLE_r", "SPY_r"], max_abs)
     out = out.dropna(subset=["XLE_r", "SPY_r"])
 
     out = transforms.estimate_idiosyncratic(out, window=window)
@@ -92,14 +105,16 @@ def preprocess_equities(
     out["spy_r_sq"] = out["SPY_r"] ** 2
     out["idio_sq"]  = out["XLE_idio"] ** 2
 
+
+
     # =============================================================================
     # 4) Daily aggregation by ET trading day (not UTC midnight)
     # =============================================================================
     out_et = out.tz_convert(ET)
 
     daily = out_et.resample(freq).agg(
-        close_xle=("XLE", "last"),
-        close_spy=("SPY", "last"),
+        xle=("XLE", "last"),
+        spy=("SPY", "last"),
         rv_xle=("xle_r_sq", "sum"),
         rv_spy=("spy_r_sq", "sum"),
         rv_idio=("idio_sq", "sum"),
@@ -135,7 +150,7 @@ def preprocess_equities(
     # 8) Final column order
     # =============================================================================
     cols = [
-        "ret_xle", "ret_spy", "ret_idio",
+        "xle", "spy", "ret_xle", "ret_spy", "ret_idio",
         "rv_xle", "rv_spy", "rv_idio",
         "log_rv_xle", "log_rv_spy", "log_rv_idio",
         "rvol_xle", "rvol_spy", "rvol_idio",
@@ -346,6 +361,15 @@ def preprocess_weather(
 # ----------------------------
 # Convenience helpers
 # ----------------------------
+
+def filter_rth(df):
+    et = df.tz_convert("America/New_York")
+    mask = (
+        (et.index.dayofweek < 5) &
+        (et.index.time >= pd.Timestamp("09:30").time()) &
+        (et.index.time <= pd.Timestamp("16:00").time())
+    )
+    return df.loc[mask]
 
 def long_to_wide(df: pd.DataFrame, pivot_by: str = "close") -> pd.DataFrame:
     """

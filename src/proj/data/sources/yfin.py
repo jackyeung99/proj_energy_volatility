@@ -5,6 +5,7 @@ from typing import List, Sequence, Union
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import time 
 
 DateLike = Union[str, pd.Timestamp]
 

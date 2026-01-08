@@ -1,16 +1,16 @@
 
 ingestion:
-  mode: full  # full or append
+  mode: append  # full or append
   lookback_days: 1
-  # start: "2024-01-01T00:00:00Z"
-  # end:   "2024-12-31T23:59:59Z"
+  # start: "2021-01-01T00:00:00Z"
+  # end:   "2026-01-01T23:59:59Z"
 
 sources:
   equities_intra:
-    enabled: true
+    enabled: false
     store_path: bronze/equities.parquet
     provider: yfin
-    interval: 1h
+    interval: 5m
     symbols: 
       - XLE
       - SPY
@@ -19,7 +19,7 @@ sources:
     enabled: true
     store_path: bronze/equities_daily.parquet
     provider: yfin
-    symbols: [ "USO", "UNG", "HYG", "TLT"]
+    symbols: ["USO", "UNG", "HYG", "TLT"]
     interval: "1d"
 
   macro:

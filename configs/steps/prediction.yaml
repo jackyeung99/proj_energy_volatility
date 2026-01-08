@@ -51,7 +51,7 @@ models:
     params:
       # use the exog cols above for HAR-RV-X
       x_cols:
-        - etf_log_^OVX
+        - macro_log_OVXCLS
         - wx_weather_iforest_flag
     options:
       log_eps: 1.0e-12

@@ -74,7 +74,6 @@ def construct_features(storage: Storage, global_cfg: dict, step_cfg: dict) -> di
 
     eq_daily_cfg = sources_cfg.get("equities_daily", {})
     if eq_daily_cfg.get("enabled", True):
-        print('hello')
         results["equities_daily"] = preprocess_one_source(storage, step_cfg, "equities_daily", eq_daily_cfg)
 
     macro_cfg = sources_cfg.get("macro", {})

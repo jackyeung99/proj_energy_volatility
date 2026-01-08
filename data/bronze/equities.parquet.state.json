@@ -1,10 +1,10 @@
 {
-  "config_fingerprint": "3add0efde260975e23342021b980a605fa9b3e74ebd5f49107587d9cc6ce72eb",
+  "config_fingerprint": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
   "dataset_end": "2026-01-08T17:30:00+00:00",
-  "dataset_start": "2024-01-10T14:30:00+00:00",
-  "last_success_utc": "2026-01-08T18:19:29.573458+00:00",
-  "pull_end": "2026-01-08T18:19:19.289248+00:00",
-  "pull_start": "2024-01-09T18:19:19.289248+00:00",
-  "rows_written": 3440,
+  "dataset_start": "2021-01-04T13:00:00+00:00",
+  "last_success_utc": "2026-01-08T21:36:25.853804+00:00",
+  "pull_end": "2026-01-01T00:00:00+00:00",
+  "pull_start": "2021-01-01T00:00:00+00:00",
+  "rows_written": 37079,
   "store_key": "bronze/equities.parquet"
 }
