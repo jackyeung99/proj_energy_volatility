@@ -5,7 +5,7 @@ run:
 
 data:
   data_dir: gold/modeling_table.parquet
-  store_path: results/results.parquet
+  store_path: prediction/predictions.parquet
 
   # Columns in the modeling table
   returns_col: ret_xle
