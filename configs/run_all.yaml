@@ -8,11 +8,11 @@ steps:
     config: steps/ingest.yaml
 
   features:
-    enabled: true
+    enabled: false
     config: steps/build_features.yaml
 
   merge:
-    enabled: true
+    enabled: false
     config: steps/merge.yaml
 
   prediction:

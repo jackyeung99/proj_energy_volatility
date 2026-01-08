@@ -35,6 +35,19 @@ models:
     fit_options:
       disp: off
       rescale: true
+    
+  - type: garch-x
+    name: GARCH_X
+    enabled: true
+    params:
+      p: 1
+      q: 1
+      mean: Zero
+      dist: t
+      x_cols: ["etf_USO_absret", "log_rv_spy", "wx_wind_speed_10m_mean_anom_z"]
+    fit_options:
+      disp: off
+      rescale: true
 
   - type: har_rv
     name: HAR_RV
@@ -50,9 +63,7 @@ models:
     enabled: true
     params:
       # use the exog cols above for HAR-RV-X
-      x_cols:
-        - macro_log_OVXCLS
-        - wx_weather_iforest_flag
+      x_cols: ["etf_USO_absret", "log_rv_spy", "wx_wind_speed_10m_mean_anom_z"]
     options:
       log_eps: 1.0e-12
 

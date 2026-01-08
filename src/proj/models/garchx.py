@@ -94,4 +94,4 @@ class GARCHProxyX(VolatilityModel):
 
         # exp(Xb) gives variance forecast in RV units
         yhat = np.exp(Xf @ self._ols_params)
-        return yhat
+        return yhat.iloc[-1:]

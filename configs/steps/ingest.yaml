@@ -7,10 +7,10 @@ ingestion:
 
 sources:
   equities_intra:
-    enabled: false
+    enabled: true
     store_path: bronze/equities.parquet
     provider: yfin
-    interval: 5m
+    interval: 15m
     symbols: 
       - XLE
       - SPY

@@ -12,6 +12,7 @@ import yaml
 
 from proj.models.ewma import EWMAVariance
 from proj.models.garch import GARCHModel
+from proj.models.garchx import GARCHProxyX
 from proj.models.harrv import HARRV
 from proj.models.base import VolatilityModel
 from proj.data.merge_helpers import merge_and_dedup
@@ -57,6 +58,13 @@ def model_factory(model_spec: dict, data_cfg: dict) -> VolatilityModel:
         q = int(params.get("q", 1))
         dist = str(params.get("dist", "t"))
         return GARCHModel(p=p, q=q, dist=dist)
+    
+    if mtype == 'garch-x':
+        p = int(params.get("p", 1))
+        q = int(params.get("q", 1))
+        dist = str(params.get("dist", "t"))
+        x_cols = params.get("x_cols", []) or []
+        return GARCHProxyX(p=p, q=q, dist=dist, x_cols=x_cols)
 
     if mtype in {"har_rv", "harrv"}:
         x_cols = params.get("x_cols", []) or []
