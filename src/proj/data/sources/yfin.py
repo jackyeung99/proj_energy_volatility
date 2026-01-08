@@ -34,41 +34,72 @@ def _chunks(start: pd.Timestamp, end: pd.Timestamp, chunk_days: int) -> List[tup
     return out
 
 
-def _fetch_one_chunk(ticker: str, cstart: pd.Timestamp, cend: pd.Timestamp, interval: str) -> pd.DataFrame:
+def _fetch_one_chunk(
+    ticker: str,
+    cstart: pd.Timestamp,
+    cend: pd.Timestamp,
+    interval: str,
+    retries: int = 3,
+    backoff: float = 1.5,
+) -> pd.DataFrame:
     """
     Fetch a single ticker for a single chunk. Returns tidy: timestamp,ticker,close
-    Uses yf.download for stability.
+    Uses yf.download with retries to handle Yahoo index flakiness (e.g. ^VIX).
     """
-    # yfinance prefers naive timestamps (interpreted as local market time); pass strings for robustness
-    df = yf.download(
-        tickers=ticker,
-        start=cstart.tz_convert(None),
-        end=cend.tz_convert(None),
-        interval=interval,
-        auto_adjust=True,
-        actions=False,
-        progress=False,
-        threads=False,
-        group_by="column",
-    )
 
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["timestamp", "ticker", "close"])
+    last_err = None
 
-    df = df.copy()
-    df.index = pd.to_datetime(df.index, utc=True)
+    for attempt in range(retries):
+        try:
+            df = yf.download(
+                tickers=ticker,
+                start=cstart.tz_convert(None),
+                end=cend.tz_convert(None),
+                interval=interval,
+                auto_adjust=True,
+                actions=False,
+                progress=False,
+                threads=False,
+                group_by="column",
+            )
 
-    # Some intervals return lowercase columns or missing Close; be defensive
-    if "Close" not in df.columns:
-        close_col = next((c for c in df.columns if str(c).lower() == "close"), None)
-        if close_col is None:
-            return pd.DataFrame(columns=["timestamp", "ticker", "close"])
-        df.rename(columns={close_col: "Close"}, inplace=True)
+            # Yahoo sometimes returns empty df without raising
+            if df is None or df.empty:
+                raise RuntimeError(f"Empty dataframe for {ticker}")
 
-    tidy = df[["Close"]].rename(columns={"Close": "close"}).reset_index()
-    tidy.columns = ["timestamp", "close"]
-    tidy["ticker"] = ticker
-    return tidy[["timestamp", "ticker", "close"]]
+            df = df.copy()
+            df.index = pd.to_datetime(df.index, utc=True)
+
+            # Defensive close column handling
+            if "Close" not in df.columns:
+                close_col = next(
+                    (c for c in df.columns if str(c).lower() == "close"), None
+                )
+                if close_col is None:
+                    raise RuntimeError(f"No Close column for {ticker}")
+                df.rename(columns={close_col: "Close"}, inplace=True)
+
+            tidy = (
+                df[["Close"]]
+                .rename(columns={"Close": "close"})
+                .reset_index()
+            )
+            tidy.columns = ["timestamp", "close"]
+            tidy["ticker"] = ticker
+
+            return tidy[["timestamp", "ticker", "close"]]
+
+        except KeyError as e:
+            # yfinance Yahoo index failure (KeyError('chart'))
+            last_err = e
+        except Exception as e:
+            last_err = e
+
+        # Exponential backoff
+        time.sleep(backoff * (2 ** attempt))
+
+    # Final fallback: return empty tidy frame (consistent with your pipeline)
+    return pd.DataFrame(columns=["timestamp", "ticker", "close"])
 
 
 def _repair_split_like_jumps(prices: pd.Series, max_abs_logret: float = 0.4) -> pd.Series:

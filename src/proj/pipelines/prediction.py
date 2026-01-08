@@ -15,87 +15,12 @@ from proj.models.garch import GARCHModel
 from proj.models.harrv import HARRV
 from proj.models.base import VolatilityModel
 from proj.data.merge_helpers import merge_and_dedup
+from proj.utils.dates import  *
 
 import logging
 logger = logging.getLogger("proj.prediction")  
 
 ET = ZoneInfo("America/New_York")
-
-
-# -----------------------
-# Helpers
-# -----------------------
-def utc_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
-
-
-def ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure a sorted UTC DatetimeIndex. Do NOT convert storage to ET.
-    """
-    df = df.copy()
-    df = df.sort_index()
-
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("predict: dataframe index must be a DatetimeIndex")
-
-    if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC")
-    else:
-        df.index = df.index.tz_convert("UTC")
-
-    return df
-
-
-def resolve_asof_date_et(
-    now_utc: datetime,
-    market_close_et: time = time(16, 0),
-) -> pd.Timestamp:
-    """
-    Decide the 'as-of' business date in Eastern time:
-      - weekends -> previous business day
-      - before market close -> previous business day
-      - after close -> today (if weekday)
-    Returns a normalized ET date timestamp (tz-naive pandas Timestamp representing date).
-    """
-    now_et = now_utc.astimezone(ET)
-    today = pd.Timestamp(now_et.date())
-
-    # weekend -> previous business day
-    if today.dayofweek >= 5:
-        return (today - pd.tseries.offsets.BDay(1)).normalize()
-
-    # before close -> previous business day
-    if now_et.time() < market_close_et:
-        return (today - pd.tseries.offsets.BDay(1)).normalize()
-
-    return today.normalize()
-
-
-def et_date_to_utc_end(day_et: pd.Timestamp) -> pd.Timestamp:
-    """
-    End-of-day boundary in UTC for an ET calendar day: [start, end).
-    We return 'end' so you can slice df.loc[:end_utc] safely using < end_utc.
-    """
-    start_et = datetime.combine(day_et.date(), time(0, 0), tzinfo=ET)
-    end_et = start_et + pd.Timedelta(days=1)
-    return pd.Timestamp(end_et.astimezone(timezone.utc))
-
-
-def next_business_day_et(day_et: pd.Timestamp) -> pd.Timestamp:
-    """
-    Next business day label in ET (date).
-    """
-    return (day_et + pd.tseries.offsets.BDay(1)).normalize()
-
-
-def forecast_label_to_utc_timestamp(day_et: pd.Timestamp) -> pd.Timestamp:
-    """
-    Represent a forecast *date label* (ET) as a UTC timestamp for output.
-    Convention: UTC midnight of that date label.
-    """
-    return pd.Timestamp(day_et.date()).tz_localize("UTC")
-
 
 def apply_train_window(df: pd.DataFrame, step_cfg: dict) -> pd.DataFrame:
     tw = step_cfg.get("data", {}).get("train_window", {}) or {}
@@ -150,6 +75,10 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
 
     Output includes both ET date labels and a UTC timestamp representation.
     """
+
+    # =============================================================================
+    # 1) Load config + set run identifiers
+    # =============================================================================
     run_id = utc_run_id()
 
     data_cfg = step_cfg.get("data", {}) or {}
@@ -157,92 +86,78 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
 
     in_key = data_cfg["data_dir"]
     store_key = data_cfg["store_path"]
+
     returns_col = data_cfg.get("returns_col", "ret")
     rv_col = data_cfg.get("realized_var_col", "rv")
 
-    # ---- Load data (keep UTC)
-    df = storage.read_parquet(in_key)
-    df = ensure_datetime_index(df)
-
-    # ---- Validate columns
-    missing = [c for c in [returns_col, rv_col] if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns in dataset: {missing}. Available: {list(df.columns)}")
-
-    # standardize
-    df = df.rename(columns={rv_col: "rv", returns_col: 'ret'})
-
-    # ---- Decide as-of date in ET based on current time
     tz_name = run_cfg.get("timezone", "America/New_York")
     if tz_name != "America/New_York":
-        # If you ever extend, support other tz via ZoneInfo
-        pass
+        raise ValueError(f"Unsupported timezone '{tz_name}'. Only America/New_York is supported.")
 
+    close_str = run_cfg.get("market_close_et") or "16:00"
+    hh, mm = (int(x) for x in close_str.split(":"))
+    close_et = time(hh, mm)
+
+    # =============================================================================
+    # 2) Load + validate data (keep timestamps in UTC)
+    # =============================================================================
+    df = storage.read_parquet(in_key)
+    df = ensure_datetime_index_utc(df)
+
+    missing = [c for c in (returns_col, rv_col) if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}. Available: {list(df.columns)}")
+
+    # Standardize names expected by models
+    df = df.rename(columns={returns_col: "ret", rv_col: "rv"})
+
+    # =============================================================================
+    # 3) Resolve as-of + forecast targets (ET close -> UTC identity)
+    # =============================================================================
     now_utc = datetime.now(timezone.utc)
-    close_str = (run_cfg.get("market_close_et") or "16:00")
-    hh, mm = [int(x) for x in close_str.split(":")]
-    asof_date_et = resolve_asof_date_et(now_utc, market_close_et=time(hh, mm))
 
-    # Slice data up through end of as-of ET day (converted to UTC boundary)
-    end_utc = et_date_to_utc_end(asof_date_et)
-    df_asof = df[df.index < end_utc]
+    # As-of trading day label (ET) + as-of close timestamp (UTC)
+    asof_date_et = resolve_asof_trade_date_et(now_utc, close_et=close_et)
+    asof_close_utc = et_close_ts_utc(asof_date_et, close_et=close_et)
 
-    # ---- Training window
+    # Forecast trading day label (ET) + forecast close timestamp (UTC) [JOIN KEY]
+    forecast_date_et = next_business_day_et(asof_date_et)
+    forecast_close_utc = et_close_ts_utc(forecast_date_et, close_et=close_et)
+
+    # =============================================================================
+    # 4) Build training frame (data available through as-of close)
+    # =============================================================================
+    df_asof = df[df.index <= asof_close_utc]
     train_df = apply_train_window(df_asof, step_cfg)
 
-    # ---- Forecast labels
-    forecast_date_et = next_business_day_et(asof_date_et)
-    forecast_ts_utc = forecast_label_to_utc_timestamp(forecast_date_et)
-
-    # ---- Results accumulator
-    results = pd.DataFrame(
-        columns=[
-            "run_id",
-            "asof_date_et",
-            "forecast_date_et",
-            "asof_end_utc",
-            "timestamp",  # UTC representation of forecast day
-            "model",
-            "variance_forecast",
-        ]
-    )
-
-    # ---- Fit + forecast enabled models
+    # =============================================================================
+    # 5) Fit models + collect forecasts (one row, model forecasts as columns)
+    # =============================================================================
     model_specs = step_cfg.get("models", []) or []
     enabled_specs = [m for m in model_specs if m.get("enabled", True)]
     if not enabled_specs:
         raise ValueError("No enabled models found in step_cfg['models'].")
 
-    factory_data_cfg = {
-        "returns_col": returns_col,
-        "realized_var_col": "rv",
-    }
+    factory_data_cfg = {"returns_col": "ret", "realized_var_col": "rv"}
 
-    # ---- Global results: 1 row per run, model forecasts as columns
-    row = {
+    row: dict[str, object] = {
+        # identifiers
         "run_id": run_id,
 
-        # metadata (date labels, not identity)
+        # labels (for humans / debugging)
         "asof_date_et": pd.Timestamp(asof_date_et).normalize(),
-
-        # identity (will become the index later)
         "forecast_date_et": pd.Timestamp(forecast_date_et).normalize(),
 
-        # optional audit/debug (keep, but not used for joins)
-        "asof_end_utc": pd.Timestamp(end_utc),
+        # identities (for joins)
+        "asof_close_utc": pd.Timestamp(asof_close_utc),
+        "forecast_close_utc": pd.Timestamp(forecast_close_utc),  # merge key vs gold.timestamp_utc
     }
 
     for spec in enabled_specs:
         model = model_factory(spec, factory_data_cfg)
-
         model.fit(train_df)
+
         fc = model.forecast(train_df)
-
-        logging.debug("Model Name %s | Predicted Vol %s",
-                    model.name, 
-                    fc  
-                      )
-
         if not isinstance(fc, pd.Series):
             raise TypeError(f"{model.name}.forecast must return pd.Series, got {type(fc)}.")
         if len(fc) != 1:
@@ -253,31 +168,23 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
             raise ValueError(f"{model.name} produced invalid variance forecast: {var_hat}")
 
         col = spec.get("name") or model.name
-
-        # prevent accidental overwrite if two models share same name
         if col in row:
             raise ValueError(f"Duplicate model column name '{col}'. Give models unique 'name' in config.")
 
         row[col] = var_hat
 
-    # one-row dataframe
-    results = pd.DataFrame([row])
-    results = (
-        results
-        .set_index("forecast_date_et")
-        .sort_index()
-    )
+    results = pd.DataFrame([row]).set_index("forecast_close_utc").sort_index()
 
+    # =============================================================================
+    # 6) Merge + persist (dedupe on forecast_close_utc index)
+    # =============================================================================
     if storage.exists(store_key):
         old_df = storage.read_parquet(store_key)
         merged = merge_and_dedup(old_df, results)
     else:
         merged = results
 
-
     storage.write_parquet(merged, store_key)
-
-
     return results
 
 

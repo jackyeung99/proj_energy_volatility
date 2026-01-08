@@ -25,15 +25,8 @@ sources:
       ffill: true
 
     # --- column roles
-    price_cols:        # transformed to log returns
-      - HYG
-      - TLT
-      - UNG
-      - USO
-
-    vol_cols:          # transformed to log levels
-      - ^VIX
-      - ^OVX
+    price_cols:  ["HYG", "TLT", "UNG", "USO"]      # transformed to log returns
+    vol_cols: []         # transformed to log levels
 
     # --- feature engineering
     features:
@@ -51,11 +44,28 @@ sources:
 
     
   macro:
-    enabled: false
+    enabled: true
     data_path: bronze/macro.parquet
     store_path: silver/macro.parquet
     provider: fred
 
+    # --- calendar handling
+    calendar:
+      use_business_days: true
+      ffill: true
+
+    # --- column roles
+    price_cols: []      # transformed to log returns
+    vol_cols: ["VIXCLS", "OVXCLS"]         # transformed to log levels
+    rate_cols: ["EFFR","DGS2", "DGS10"]
+
+    # --- feature engineering
+    features:
+      add_absrets: true        # |returns| for volatility regressions
+      add_vol_logs: true       # log(VIX), log(OVX)
+      keep_raw_levels: false   # do not pass price levels to models
+
+ 
 
   weather:
     enabled: true

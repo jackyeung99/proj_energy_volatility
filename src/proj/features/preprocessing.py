@@ -4,17 +4,17 @@ from typing import Iterable, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+from zoneinfo import ZoneInfo
+from datetime import time
 
 from proj.features import transforms, anomaly_detection
+from proj.utils.dates import *
 
+ET = ZoneInfo("America/New_York")
 
 # ----------------------------
 # Small utilities
 # ----------------------------
-
-def _require_datetime_index(df: pd.DataFrame, name: str) -> None:
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError(f"{name}: df must be indexed by a DatetimeIndex")
 
 
 def _as_daily(df: pd.DataFrame, freq: str, how: str = "last") -> pd.DataFrame:
@@ -51,49 +51,53 @@ def _winsorize_series(s: pd.Series, p: float) -> pd.Series:
 # Equities: intraday -> daily realized measures
 # ----------------------------
 
+# --- intraday equities preprocessing (updated to ET trading-day buckets + ET-close UTC identity)
+
+
+
 def preprocess_equities(
     df: pd.DataFrame,
     base_features_cfg: dict,
     source_cfg: dict,
 ) -> pd.DataFrame:
-    """
-    Build DAILY realized measures from 30-min prices for XLE/SPY.
+    """Daily realized measures from intraday prices; index stamped to ET close in UTC."""
 
-    Input:
-      - df: 30-min price dataframe, DatetimeIndex, columns include ["XLE","SPY"].
-
-    Output (daily index):
-      - ret, mkt_ret
-      - rv_total, rv_idio
-      - log_rv_total, log_rv_idio
-      - rvol_total, rvol_idio
-      - n_intra
-    """
-    _require_datetime_index(df, "preprocess_equities")
+    # =============================================================================
+    # 1) Validate + standardize index (tz-aware UTC)
+    # =============================================================================
     out = df.copy().sort_index()
+    out = ensure_datetime_index_utc(out)
 
-    # ---- config
-    freq = base_features_cfg.get("resample_freq", "1D")
+
+    # =============================================================================
+    # 2) Config
+    # =============================================================================
+    freq = base_features_cfg.get("resample_freq", "1D")          # daily buckets
     window = int(source_cfg.get("idio_window", 60))
     min_bins = int(source_cfg.get("min_intraday_bins", 1))
     log_eps = float(source_cfg.get("log_eps", 1e-12))
+    close_et = time(*map(int, (source_cfg.get("market_close_et", "16:00")).split(":")))
 
-    # 1) Intraday log returns
+    # =============================================================================
+    # 3) Intraday features (returns, idio residuals, RV components)
+    # =============================================================================
     out["XLE_r"] = transforms.log_returns(out, "XLE") * 100
     out["SPY_r"] = transforms.log_returns(out, "SPY") * 100
     out = out.dropna(subset=["XLE_r", "SPY_r"])
 
-    # 2) Intraday idiosyncratic residuals
     out = transforms.estimate_idiosyncratic(out, window=window)
     out = out.dropna(subset=["XLE_idio"])
 
-    # 3) Intraday components for realized measures
     out["xle_r_sq"] = out["XLE_r"] ** 2
     out["spy_r_sq"] = out["SPY_r"] ** 2
     out["idio_sq"]  = out["XLE_idio"] ** 2
 
-    # 4) Daily aggregation
-    daily = out.resample(freq).agg(
+    # =============================================================================
+    # 4) Daily aggregation by ET trading day (not UTC midnight)
+    # =============================================================================
+    out_et = out.tz_convert(ET)
+
+    daily = out_et.resample(freq).agg(
         close_xle=("XLE", "last"),
         close_spy=("SPY", "last"),
         rv_xle=("xle_r_sq", "sum"),
@@ -105,10 +109,20 @@ def preprocess_equities(
         n_intra=("XLE_r", "count"),
     )
 
-    # 5) Filter low-coverage days
+    # =============================================================================
+    # 5) Coverage filter
+    # =============================================================================
     daily = daily.loc[daily["n_intra"] >= min_bins].copy()
 
-    # 6) Logs + realized vol (sqrt RV)
+    # =============================================================================
+    # 6) Stamp daily identity to ET close converted to UTC (gold standard)
+    #    - resample produces an ET-midnight label; convert that label -> ET close -> UTC
+    # =============================================================================
+    daily = date_index_to_et_close_utc(daily, close_et=close_et)
+
+    # =============================================================================
+    # 7) Derived daily features (logs + realized vol)
+    # =============================================================================
     daily["log_rv_xle"]  = np.log(daily["rv_xle"]  + log_eps)
     daily["log_rv_spy"]  = np.log(daily["rv_spy"]  + log_eps)
     daily["log_rv_idio"] = np.log(daily["rv_idio"] + log_eps)
@@ -117,7 +131,9 @@ def preprocess_equities(
     daily["rvol_spy"]  = np.sqrt(daily["rv_spy"].clip(lower=0))
     daily["rvol_idio"] = np.sqrt(daily["rv_idio"].clip(lower=0))
 
-    # 7) Tidy order
+    # =============================================================================
+    # 8) Final column order
+    # =============================================================================
     cols = [
         "ret_xle", "ret_spy", "ret_idio",
         "rv_xle", "rv_spy", "rv_idio",
@@ -130,7 +146,7 @@ def preprocess_equities(
 
 
 # ----------------------------
-# Equities substitutes: daily ETF proxies + vol indices -> lagged exog
+# Faily Equities & Macro:  ETF proxies + vol indices -> lagged exog
 # ----------------------------
 
 def preprocess_equities_daily(
@@ -150,7 +166,7 @@ def preprocess_equities_daily(
     """
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         raise ValueError("preprocess_equities_daily: df must be a non-empty DataFrame")
-    _require_datetime_index(df, "preprocess_equities_daily")
+    ensure_datetime_index_utc(df)
 
     out = df.copy().sort_index()
 
@@ -163,32 +179,39 @@ def preprocess_equities_daily(
     ffill = bool(source_cfg.get("ffill", True))
     winsor_p = float(source_cfg.get("winsor_p", 0.005))
 
-    price_cols = list(source_cfg.get("price_cols", ["HYG", "TLT", "UNG", "USO"]))
-    vol_cols = list(source_cfg.get("vol_cols", ["^VIX", "^OVX"]))
+    price_cols = list(source_cfg.get("price_cols", []))
+    vol_cols = list(source_cfg.get("vol_cols", []))
+    rate_cols = list(source_cfg.get("rate_cols", []))
 
     add_absrets = bool(base_features_cfg.get("add_absrets", True))
     add_vol_logs = bool(base_features_cfg.get("add_vol_logs", True))
-    winsorize_cols = list(base_features_cfg.get("winsorize_cols", ["UNG_ret", "USO_ret"]))
+    winsorize_cols = list(base_features_cfg.get("winsorize_cols", []))
     keep_raw_levels = bool(base_features_cfg.get("keep_raw_levels", False))
 
-    # 1) normalize daily calendar
+    # normalize daily calendar
     out = _as_daily(out, freq=freq, how="last")
     if use_business_days:
         out = out.asfreq("B")
     if ffill:
         out = out.ffill()
 
-    # 2) price -> log returns (+ abs returns)
+    # Rate Level  -> keep as is 
+    for c in rate_cols:
+        if c not in out.columns:
+            continue
+        out[f"{c}_rate"] = out[c].astype(float)
+
+    # price -> log returns (+ abs returns)
     for c in price_cols:
         if c not in out.columns:
             continue
         if (out[c] <= 0).any():
             raise ValueError(f"preprocess_equities_daily: '{c}' has non-positive values; cannot log.")
-        out[f"{c}_ret"] = np.log(out[c]).diff()
+        out[f"{c}_ret"] = transforms.log_returns(out, c) * 100
         if add_absrets:
             out[f"{c}_absret"] = out[f"{c}_ret"].abs()
 
-    # 3) vol index -> log level
+    # vol index -> log level
     if add_vol_logs:
         for c in vol_cols:
             if c not in out.columns:
@@ -197,13 +220,17 @@ def preprocess_equities_daily(
                 raise ValueError(f"preprocess_equities_daily: '{c}' has non-positive values; cannot log.")
             out[f"log_{c}"] = np.log(out[c] + log_eps)
 
-    # 4) winsorize heavy-tailed daily returns (common for UNG/USO)
+    # winsorize heavy-tailed daily returns (common for UNG/USO)
     for c in winsorize_cols:
         if c in out.columns:
             out[c] = _winsorize_series(out[c], winsor_p)
 
-    # 5) select contemporaneous exog base features to lag
+    # select contemporaneous exog base features to lag
     exog_base: list[str] = []
+    for c in rate_cols:
+        if f"{c}_rate" in out.columns:
+            exog_base.append(f"{c}_rate")
+
     for c in price_cols:
         if f"{c}_ret" in out.columns:
             exog_base.append(f"{c}_ret")
@@ -219,12 +246,12 @@ def preprocess_equities_daily(
     seen = set()
     exog_base = [c for c in exog_base if not (c in seen or seen.add(c))]
 
-    # 6) create lags + drop contemporaneous by default
+    # create lags + drop contemporaneous by default
     # out = _make_lags(out, exog_base, max_lag=max_lag)
     # if exog_base:
     #     out = out.drop(columns=exog_base)
 
-    # 7) optional: keep raw levels (debug/EDA only)
+    #  optional: keep raw levels (debug/EDA only)
     # if not keep_raw_levels:
     #     drop_raw = [c for c in price_cols + vol_cols if c in out.columns]
     #     if drop_raw:
@@ -233,43 +260,6 @@ def preprocess_equities_daily(
     return out[exog_base].dropna()
 
 
-# ----------------------------
-# Macro: resample -> ffill -> lag (drop contemporaneous)
-# ----------------------------
-
-def preprocess_macro(
-    df: pd.DataFrame,
-    base_features_cfg: dict,
-    source_cfg: dict,
-) -> pd.DataFrame:
-    """
-    Simple macro preprocessing:
-      - resample to freq
-      - forward-fill
-      - create lags
-      - drop contemporaneous columns
-    """
-    _require_datetime_index(df, "preprocess_macro")
-    out = df.copy().sort_index()
-
-    # ---- config
-    freq = base_features_cfg.get("resample_freq", "1D")
-    max_lag = int(base_features_cfg.get("max_lag", 1))
-    ffill = bool(source_cfg.get("ffill", True))
-
-    # 1) resample
-    out = _as_daily(out, freq=freq, how="last")
-
-    # 2) ffill
-    if ffill:
-        out = out.ffill()
-
-    # 3) lag + drop contemporaneous
-    # exog_base = list(out.columns)
-    # out = _make_lags(out, exog_base, max_lag=max_lag)
-    # out = out.drop(columns=exog_base)
-
-    return out.dropna()
 
 
 # ----------------------------
@@ -288,7 +278,7 @@ def preprocess_weather(
       - optional multivariate IsolationForest anomaly score/flag
       - lag anomalies and drop contemporaneous
     """
-    _require_datetime_index(df, "preprocess_weather")
+    ensure_datetime_index_utc(df)
     out = df.copy().sort_index()
 
     # ---- config

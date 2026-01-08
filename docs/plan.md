@@ -28,5 +28,3 @@ Using weather time series data develop anomaly detection models.
 - Hyperparameter tuning 
 - test the impact of each exogenous feature on marginal imrpovement of QLIKE
 
-
-### 3. Trading Strategy

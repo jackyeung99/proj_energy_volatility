@@ -1,6 +1,6 @@
 
 ingestion:
-  mode: append  # full or append
+  mode: full  # full or append
   lookback_days: 1
   # start: "2024-01-01T00:00:00Z"
   # end:   "2024-12-31T23:59:59Z"
@@ -19,16 +19,17 @@ sources:
     enabled: true
     store_path: bronze/equities_daily.parquet
     provider: yfin
-    symbols: ["^VIX", "^OVX", "USO", "UNG", "HYG", "TLT"]
+    symbols: [ "USO", "UNG", "HYG", "TLT"]
     interval: "1d"
 
   macro:
-    enabled: false
+    enabled: true
     store_path: bronze/macro.parquet
     provider: fred
     series: 
       # ===== Implied / Rates / Stress
       - VIXCLS        # Implied equity volatility
+      - OVXCLS
       - EFFR          # Fed Funds rate (daily)
       - DGS2          # 2-year Treasury yield
       - DGS10         # 10-year Treasury yield
@@ -40,9 +41,9 @@ sources:
       # - GASREGCOVW    # Weighted average gas prices
 
       # ===== Currency
-      - DEXUSEU       # USD / EUR
-      - DEXMXUS       # USD / MXN
-      - DEXCHUS       # USD / China
+      # - DEXUSEU       # USD / EUR
+      # - DEXMXUS       # USD / MXN
+      # - DEXCHUS       # USD / China
     
 
   weather:

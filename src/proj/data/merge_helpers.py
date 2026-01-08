@@ -1,30 +1,30 @@
 from __future__ import annotations
-import pandas as pd
 
+import pandas as pd
+from datetime import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple
 
+from proj.utils.dates import normalize_to_et_close_utc, ensure_datetime_index_utc, date_index_to_et_close_utc
 
 
-def _ensure_dt_index(df: pd.DataFrame, name: str) -> pd.DataFrame:
-    if df is None or df.empty:
-        raise ValueError(f"{name}: dataframe is empty or None")
+
+def standardize_daily_identity_index(
+    df: pd.DataFrame,
+    name: str,
+    close_et: time = time(16, 0),
+) -> pd.DataFrame:
     if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError(f"{name}: must have DatetimeIndex")
-    return df.sort_index()
+        raise ValueError(f"{name}: df must be indexed by a DatetimeIndex")
 
+    df = df.copy().sort_index()
 
-def _normalize_daily_index_utc(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize index to midnight UTC day boundaries. Keeps DatetimeIndex type.
-    """
-    out = df.copy()
-    idx = out.index
-    if idx.tz is not None:
-        idx = idx.tz_convert("UTC")
-    out.index = idx.normalize()
-    return out
+    if df.index.tz is not None:
+        # tz-aware timestamps: snap to ET close then convert to UTC
+        return normalize_to_et_close_utc(df, close_et=close_et)
 
+    # tz-naive daily labels: interpret as ET dates, then stamp to ET close -> UTC
+    return date_index_to_et_close_utc(df, close_et=close_et)
 
 def _prefix_cols(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     out = df.copy()
@@ -66,6 +66,25 @@ class MergeSpec:
     enforce_lags_only: bool = True
 
 
+
+def standardize_daily_identity_index(
+    df: pd.DataFrame,
+    name: str,
+    close_et: time = time(16, 0),
+) -> pd.DataFrame:
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError(f"{name}: df must be indexed by a DatetimeIndex")
+
+    df = df.copy().sort_index()
+
+    if df.index.tz is not None:
+        # tz-aware timestamps: snap to ET close then convert to UTC
+        return normalize_to_et_close_utc(df, close_et=close_et)
+
+    # tz-naive daily labels: interpret as ET dates, then stamp to ET close -> UTC
+    return date_index_to_et_close_utc(df, close_et=close_et)
+
+
 def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.DataFrame:
     if spec.anchor_name not in datasets:
         raise ValueError(f"merge_to_gold: missing anchor dataset '{spec.anchor_name}'")
@@ -76,42 +95,29 @@ def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.Data
         "weather": "wx_",
     }
 
-    # Anchor
-    anchor = _ensure_dt_index(datasets[spec.anchor_name], spec.anchor_name)
-    anchor = _normalize_daily_index_utc(anchor)
+    close_et = getattr(spec, "close_et", time(16, 0))
+
+    # 1) Anchor (defines the index)
+    anchor = standardize_daily_identity_index(datasets[spec.anchor_name], spec.anchor_name, close_et=close_et)
 
     if spec.start_date is not None:
-        anchor = anchor.loc[anchor.index >= pd.Timestamp(spec.start_date)]
+        anchor = anchor.loc[anchor.index >= pd.Timestamp(spec.start_date, tz="UTC")]
     if spec.end_date is not None:
-        anchor = anchor.loc[anchor.index <= pd.Timestamp(spec.end_date)]
+        anchor = anchor.loc[anchor.index <= pd.Timestamp(spec.end_date, tz="UTC")]
 
     out = anchor.copy()
 
-    # Merge others
+    # 2) Merge remaining datasets (all standardized to same identity index)
     for name, df in datasets.items():
         if name == spec.anchor_name:
             continue
 
-        df = _ensure_dt_index(df, name)
-        df = _normalize_daily_index_utc(df)
-
-        # if spec.enforce_lags_only:
-        #     _validate_lags_only(df, name)
+        df = standardize_daily_identity_index(df, name, close_et=close_et)
 
         pref = prefixes.get(name, f"{name}_")
         df = _prefix_cols(df, pref)
 
         out = out.join(df, how=spec.join_how)
-
-    # Require target(s)
-    if spec.dropna_target and spec.target_cols:
-        missing = [c for c in spec.target_cols if c not in out.columns]
-        if missing:
-            raise ValueError(f"merge_to_gold: missing required target columns: {missing}")
-        out = out.dropna(subset=list(spec.target_cols))
-
-    # Drop all-NA columns (happens when a dataset is shorter)
-    out = out.dropna(axis=1, how="all")
 
     return out
 

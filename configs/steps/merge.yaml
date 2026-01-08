@@ -11,7 +11,7 @@ merge_gold:
       path: silver/equities_daily.parquet
 
     macro:
-      enabled: false
+      enabled: true
       path: silver/macro.parquet
 
     weather:

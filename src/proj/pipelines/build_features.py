@@ -6,7 +6,7 @@ import numpy as np
 
 from proj.data.ingestion_state import get_last_available_date, update_state
 from proj.features import transforms
-from proj.features.preprocessing import preprocess_equities, preprocess_equities_daily, preprocess_for_vol_prediction, preprocess_macro, preprocess_weather
+from proj.features.preprocessing import preprocess_equities, preprocess_equities_daily, preprocess_weather
 from proj.data.storage import Storage
 
 
@@ -18,13 +18,8 @@ logger = logging.getLogger("proj.build_features")
 def preprocess_by_source(source_name: str, df: pd.DataFrame, base_features_cfg: dict,  source_cfg: dict):
     if source_name == "equities_intra":
         return preprocess_equities(df, base_features_cfg,  source_cfg)
-    # lag applied exogenous 
-    if source_name == "equities_daily":
+    if source_name == "equities_daily" or source_name == "macro":
         return preprocess_equities_daily(df, base_features_cfg,  source_cfg)
-    # lag applied exogenous 
-    if source_name == "macro":
-        return preprocess_macro(df, base_features_cfg,  source_cfg)
-    # lag applied exogenous 
     if source_name == "weather":
         return preprocess_weather(df, base_features_cfg,  source_cfg)
     raise ValueError(f"Unknown source '{source_name}'")
