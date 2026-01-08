@@ -11,11 +11,6 @@ data:
   returns_col: ret_xle
   realized_var_col: rv_xle
 
-  # Optional exogenous regressors for HAR-RV-X
-  exog_cols:
-    - etf_log_^OVX
-    - wx_weather_iforest_flag
-
   train_window:
     mode: rolling         # rolling | expanding
     rolling_days: 1460    # ~4 years
@@ -40,6 +35,15 @@ models:
     fit_options:
       disp: off
       rescale: true
+
+  - type: har_rv
+    name: HAR_RV
+    enabled: true
+    params:
+      # use the exog cols above for HAR-RV-X
+      x_cols: []
+    options:
+      log_eps: 1.0e-12
 
   - type: har_rv
     name: HAR_RV_X
