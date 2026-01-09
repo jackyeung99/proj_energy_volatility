@@ -15,7 +15,7 @@ from proj.models.garch import GARCHModel
 from proj.models.garchx import GARCHProxyX
 from proj.models.harrv import HARRV
 from proj.models.base import VolatilityModel
-from proj.data.merge_helpers import merge_and_dedup
+from proj.data.merge_helpers import merge_and_dedup_long
 from proj.utils.dates import  *
 
 import logging
@@ -148,7 +148,9 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
 
     factory_data_cfg = {"returns_col": "ret", "realized_var_col": "rv"}
 
-    row: dict[str, object] = {
+    rows: list[dict[str, object]] = []
+
+    base: dict[str, object] = {
         # identifiers
         "run_id": run_id,
 
@@ -175,22 +177,33 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
         if not np.isfinite(var_hat) or var_hat <= 0:
             raise ValueError(f"{model.name} produced invalid variance forecast: {var_hat}")
 
-        col = spec.get("name") or model.name
-        if col in row:
-            raise ValueError(f"Duplicate model column name '{col}'. Give models unique 'name' in config.")
+        model_id = spec.get("name") or model.name
+        # one row per model per forecast date
+        rows.append(
+            {
+                **base,
+                "model": model_id,
+                "predicted_value": var_hat,
+            }
+        )
 
-        row[col] = var_hat
-
-    results = pd.DataFrame([row]).set_index("forecast_close_utc").sort_index()
+    results = (
+        pd.DataFrame(rows)
+        .sort_values(by=["forecast_close_utc", 'model'])
+        .set_index("forecast_close_utc")
+        .sort_index()
+        
+    )
 
     # =============================================================================
     # 6) Merge + persist (dedupe on forecast_close_utc index)
     # =============================================================================
     if storage.exists(store_key):
         old_df = storage.read_parquet(store_key)
-        merged = merge_and_dedup(old_df, results)
+        merged = merge_and_dedup_long(old_df, results, "model")
     else:
         merged = results
+
 
     storage.write_parquet(merged, store_key)
     return results

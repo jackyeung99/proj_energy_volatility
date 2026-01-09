@@ -20,3 +20,7 @@ steps:
   prediction:
     enabled: true
     config: steps/prediction.yaml
+
+  scoring:
+    enabled: true
+    congig: steps/scoring.yaml

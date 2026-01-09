@@ -152,3 +152,50 @@ def merge_and_dedup(
     merged = merged.sort_index()
 
     return merged
+
+import pandas as pd
+
+def merge_and_dedup_long(
+    old_df: pd.DataFrame,
+    new_df: pd.DataFrame,
+    long_col: str,
+    *,
+    keep: str = "last",
+    sort: bool = True,
+) -> pd.DataFrame:
+    """
+    Merge two long-form DataFrames (time-series index) and de-duplicate on (index, long_col).
+
+    Assumes:
+      - index is datetime-like (will be normalized to UTC)
+      - long_col exists (e.g., 'model')
+    """
+
+    # Handle empty inputs
+    if old_df is None or len(old_df) == 0:
+        out = new_df.copy()
+    elif new_df is None or len(new_df) == 0:
+        out = old_df.copy()
+    else:
+        out = pd.concat([old_df, new_df], axis=0)
+
+    if out is None or len(out) == 0:
+        return out
+
+    # Validate
+    if long_col not in out.columns:
+        raise ValueError(f"merge_and_dedup_long: missing required column '{long_col}'")
+
+    # Normalize index to tz-aware UTC
+    out = out.copy()
+    out.index = pd.to_datetime(out.index, utc=True, errors="coerce")
+    out = out.loc[~out.index.isna()]
+    out[long_col] = out[long_col].astype(str)
+
+    # dedup on (time index, model)
+    tmp = out.reset_index(names="ts")
+    tmp = tmp.drop_duplicates(subset=["ts", long_col], keep=keep)
+
+    tmp = tmp.sort_values(["ts", long_col])
+    tmp = tmp.set_index("ts")
+    return tmp

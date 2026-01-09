@@ -1,0 +1,14 @@
+files:
+  rv_data_dir:  gold/modeling_table.parquet
+  predictions_dir:  prediction/predictions.parquet
+  output_dir: aggregates/scored_predictions.parquet
+
+aggregation:
+  enabled: true
+  windows:
+    - name: weekly
+      freq: "W-FRI"
+      reducer: mean
+    - name: monthly
+      freq: "M"
+      reducer: mean

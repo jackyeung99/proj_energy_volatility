@@ -13,6 +13,7 @@ from proj.pipelines.ingestion import ingest
 from proj.pipelines.merge import merge_data
 from proj.pipelines.build_features import construct_features
 from proj.pipelines.prediction import predict_next
+from proj.pipelines.scoring import score_predictions
 
 
 STEP_DISPATCH = {
@@ -20,6 +21,7 @@ STEP_DISPATCH = {
     "features": construct_features,
     "merge": merge_data,
     "prediction": predict_next,
+    "scoring": score_predictions, 
 }
 
 
