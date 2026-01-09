@@ -35,8 +35,8 @@ sources:
       - DGS10         # 10-year Treasury yield
 
       # ===== Commodity
-      - DCOILWTICO    # Crude oil spot
-      - DHHNGSP       # Natural gas
+      # - DCOILWTICO    # Crude oil spot
+      # - DHHNGSP       # Natural gas
       # - WPROPANEMBTX  # Propane TX
       # - GASREGCOVW    # Weighted average gas prices
 
