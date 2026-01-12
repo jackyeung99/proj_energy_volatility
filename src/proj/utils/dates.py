@@ -114,75 +114,113 @@ def resolve_asof_trade_date_et(
 # -----------------------
 # Normalizers for gold construction
 # -----------------------
-def normalize_to_et_close_utc(df: pd.DataFrame, close_et: time = time(16, 0)) -> pd.DataFrame:
-    """
-    Normalize a tz-aware timestamp index to ET close (converted to UTC).
 
-    Use this when you already have timestamped rows (intraday or daily) but want a
-    stable daily identity key (ET close in UTC).
-    """
+def parse_hhmm(s: str, default: str = "16:00") -> time:
+    if not s:
+        s = default
+    hh, mm = s.split(":")
+    return time(int(hh), int(mm))
+
+def ensure_datetime_index_utc(df: pd.DataFrame, *, name: str = "df") -> pd.DataFrame:
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError(f"{name}: index must be a DatetimeIndex")
+
     out = df.copy()
-    if not isinstance(out.index, pd.DatetimeIndex):
-        raise ValueError("normalize_to_et_close_utc: index must be a DatetimeIndex")
-
     idx = out.index
+
     if idx.tz is None:
-        raise ValueError("normalize_to_et_close_utc: index must be tz-aware (UTC recommended)")
+        out.index = pd.to_datetime(idx).tz_localize("UTC")
+    else:
+        out.index = idx.tz_convert("UTC")
 
-    idx_et = idx.tz_convert(ET)
-    idx_et_close = idx_et.map(
-        lambda ts: ts.replace(
-            hour=close_et.hour,
-            minute=close_et.minute,
-            second=0,
-            microsecond=0,
-        )
-    )
-    out.index = idx_et_close.tz_convert("UTC")
+    return out.sort_index()
+
+def is_midnight_utc_labels(idx: pd.DatetimeIndex) -> bool:
+    """
+    True if timestamps are exactly midnight when viewed in UTC (robust to tz implementations).
+    """
+    if idx.tz is None:
+        return False
+    idx_utc = idx.tz_convert("UTC")
+    return (idx_utc == idx_utc.normalize()).all()
+
+def labels_as_et_close_utc_from_utc_midnight(idx: pd.DatetimeIndex, close_et: time) -> pd.DatetimeIndex:
+    """
+    idx are tz-aware and represent daily labels at midnight UTC.
+    Interpret the *date label* (UTC date) then stamp ET close for that date.
+    """
+    idx_utc = idx.tz_convert("UTC")
+    dates = idx_utc.normalize().tz_localize(None)          # tz-naive dates
+    et_midnight = dates.tz_localize(ET)                    # localize as ET-midnight of the label date
+    et_close = et_midnight + pd.Timedelta(hours=close_et.hour, minutes=close_et.minute)
+    return et_close.tz_convert("UTC")
+
+def labels_as_et_close_utc_from_naive_dates(idx: pd.DatetimeIndex, close_et: time) -> pd.DatetimeIndex:
+    """
+    idx are tz-naive date labels (YYYY-MM-DD). Interpret as ET date labels then stamp ET close.
+    """
+    et_midnight = pd.to_datetime(idx).normalize().tz_localize(ET)
+    et_close = et_midnight + pd.Timedelta(hours=close_et.hour, minutes=close_et.minute)
+    return et_close.tz_convert("UTC")
+
+def instants_to_et_close_utc(idx: pd.DatetimeIndex, close_et: time) -> pd.DatetimeIndex:
+    """
+    idx are real instants. Map each instant to its ET calendar day, then stamp ET close.
+    """
+    et = idx.tz_convert(ET)
+    et_close = et.normalize() + pd.Timedelta(hours=close_et.hour, minutes=close_et.minute)
+    return et_close.tz_convert("UTC")
+
+def standardize_daily_identity_index(
+    df: pd.DataFrame,
+    *,
+    close_et: time = time(16, 0),
+    name: str = "df",
+) -> pd.DataFrame:
+    """
+    Normalize index to "ET close expressed in UTC" without snap-back.
+
+    - tz-naive => ET date labels
+    - tz-aware midnight UTC => UTC date labels
+    - tz-aware non-midnight => real instants
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError(f"{name}: df must have a DatetimeIndex")
+
+    out = df.copy().sort_index()
+    idx = out.index
+
+    if idx.tz is None:
+        out.index = labels_as_et_close_utc_from_naive_dates(idx, close_et)
+        return out
+
+    if is_midnight_utc_labels(idx):
+        out.index = labels_as_et_close_utc_from_utc_midnight(idx, close_et)
+        return out
+
+    out.index = instants_to_et_close_utc(idx, close_et)
     return out
 
+def filter_rth(
+    df: pd.DataFrame,
+    *,
+    start: str = "09:30",
+    end: str = "16:00",
+    tz: ZoneInfo = ET,
+    name: str = "df",
+) -> pd.DataFrame:
+    if not isinstance(df.index, pd.DatetimeIndex) or df.index.tz is None:
+        raise ValueError(f"{name}: filter_rth expects tz-aware DatetimeIndex")
 
-def date_index_to_et_close_utc(df: pd.DataFrame, close_et: time = time(16, 0)) -> pd.DataFrame:
-    """
-    Convert an index representing *ET calendar dates* into the UTC timestamp of
-    ET market close for those dates.
-
-    Accepts:
-      - DATE / string dates (tz-naive)
-      - tz-naive datetimes
-      - tz-aware datetimes (will be converted to ET first, then date-extracted)
-
-    Output:
-      - tz-aware UTC DatetimeIndex at ET close (DST-safe)
-    """
-    out = df.copy()
-
-    if not isinstance(out.index, pd.DatetimeIndex):
-        # allow strings/dates etc.
-        idx = pd.to_datetime(out.index, errors="raise")
-    else:
-        idx = out.index
-
-    # If tz-aware, convert to ET and take the ET date label (normalize in ET).
-    # If tz-naive, treat it as an ET date label directly.
-    if idx.tz is not None:
-        idx_et_dates = idx.tz_convert(ET).normalize()
-    else:
-        idx_et_dates = pd.to_datetime(idx).normalize().tz_localize(ET)
-
-    # Stamp to ET close on that ET date
-    idx_et_close = idx_et_dates.map(
-        lambda ts: ts.replace(
-            hour=close_et.hour,
-            minute=close_et.minute,
-            second=0,
-            microsecond=0,
-        )
+    et = df.tz_convert(tz)
+    start_t = pd.Timestamp(start).time()
+    end_t = pd.Timestamp(end).time()
+    mask = (
+        (et.index.dayofweek < 5)
+        & (et.index.time >= start_t)
+        & (et.index.time <= end_t)
     )
-
-    out.index = idx_et_close.tz_convert("UTC")
-    return out
-
+    return df.loc[mask]
 
 
 # -----------------------

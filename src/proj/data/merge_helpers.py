@@ -5,26 +5,29 @@ from datetime import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple
 
-from proj.utils.dates import normalize_to_et_close_utc, ensure_datetime_index_utc, date_index_to_et_close_utc
+from proj.utils.dates import *
+
+ET = "America/New_York"
 
 
 
-def standardize_daily_identity_index(
-    df: pd.DataFrame,
-    name: str,
-    close_et: time = time(16, 0),
-) -> pd.DataFrame:
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError(f"{name}: df must be indexed by a DatetimeIndex")
+# def standardize_daily_identity_index(df: pd.DataFrame, name: str, close_et: time = time(16,0)) -> pd.DataFrame:
+#     if not isinstance(df.index, pd.DatetimeIndex):
+#         raise ValueError(f"{name}: df must be indexed by a DatetimeIndex")
 
-    df = df.copy().sort_index()
+#     out = df.copy().sort_index()
 
-    if df.index.tz is not None:
-        # tz-aware timestamps: snap to ET close then convert to UTC
-        return normalize_to_et_close_utc(df, close_et=close_et)
+#     # tz-naive -> interpret as ET date labels
+#     if out.index.tz is None:
+#         return date_index_to_et_close_utc(out, close_et=close_et)
 
-    # tz-naive daily labels: interpret as ET dates, then stamp to ET close -> UTC
-    return date_index_to_et_close_utc(df, close_et=close_et)
+#     # tz-aware midnight UTC -> interpret as DATE LABELS (FIXED)
+#     if _is_midnight_utc(out.index):
+#         out.index = _utc_midnight_labels_to_et_close_utc(out.index, close_et=close_et)
+#         return out
+
+#     # otherwise treat as real instants already
+#     return normalize_to_et_close_utc(out, close_et=close_et)
 
 def _prefix_cols(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     out = df.copy()
@@ -57,6 +60,34 @@ def _validate_lags_only(df: pd.DataFrame, name: str, allow: Optional[Sequence[st
             f"{name}: found non-lagged columns (potential leakage): {bad[:10]}"
             + (" ..." if len(bad) > 10 else "")
         )
+    
+def _assert_daily_identity_utc(df: pd.DataFrame, name: str) -> None:
+    """
+    Validate (do not modify) that df is on canonical daily identity:
+    - tz-aware UTC DatetimeIndex
+    - minute == 0
+    - hour in {20, 21} (4pm ET expressed in UTC depending on DST)
+    - unique index
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError(f"{name}: index must be a DatetimeIndex")
+
+    if df.index.tz is None:
+        raise ValueError(f"{name}: index must be tz-aware (expected UTC)")
+
+    # Convert-only check (doesn't mutate df)
+    idx_utc = df.index.tz_convert("UTC")
+
+    if not df.index.is_unique:
+        raise ValueError(f"{name}: index must be unique (found duplicates)")
+
+    if not (idx_utc.minute == 0).all():
+        bad = idx_utc[idx_utc.minute != 0][:5]
+        raise ValueError(f"{name}: expected minute==0 for daily identity; examples: {bad}")
+
+    if not set(idx_utc.hour.unique()).issubset({20, 21}):
+        bad_hours = sorted(set(idx_utc.hour.unique()) - {20, 21})
+        raise ValueError(f"{name}: expected hour in {{20,21}} (ET close in UTC); got {bad_hours}")
 
 
 @dataclass
@@ -76,22 +107,6 @@ class MergeSpec:
 
 
 
-def standardize_daily_identity_index(
-    df: pd.DataFrame,
-    name: str,
-    close_et: time = time(16, 0),
-) -> pd.DataFrame:
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError(f"{name}: df must be indexed by a DatetimeIndex")
-
-    df = df.copy().sort_index()
-
-    if df.index.tz is not None:
-        # tz-aware timestamps: snap to ET close then convert to UTC
-        return normalize_to_et_close_utc(df, close_et=close_et)
-
-    # tz-naive daily labels: interpret as ET dates, then stamp to ET close -> UTC
-    return date_index_to_et_close_utc(df, close_et=close_et)
 
 
 def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.DataFrame:
@@ -107,28 +122,26 @@ def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.Data
     # columns that should NEVER be prefixed
     no_prefix_cols = {"XLE", "SPY"}
 
-    close_et = getattr(spec, "close_et", time(16, 0))
+    # 1) Anchor (ASSUMED already standardized upstream)
+    anchor = datasets[spec.anchor_name].copy().sort_index()
+    _assert_daily_identity_utc(anchor, spec.anchor_name)
 
-    # 1) Anchor
-    anchor = standardize_daily_identity_index(
-        datasets[spec.anchor_name],
-        spec.anchor_name,
-        close_et=close_et,
-    )
-
+    # Optional slicing only (no normalization)
     if spec.start_date is not None:
+        # Interpret user-provided date bounds as UTC instants
         anchor = anchor.loc[anchor.index >= pd.Timestamp(spec.start_date, tz="UTC")]
     if spec.end_date is not None:
         anchor = anchor.loc[anchor.index <= pd.Timestamp(spec.end_date, tz="UTC")]
 
     out = anchor.copy()
 
-    # 2) Merge remaining datasets
+    # 2) Merge remaining datasets (ASSUMED already standardized upstream)
     for name, df in datasets.items():
         if name == spec.anchor_name:
             continue
 
-        df = standardize_daily_identity_index(df, name, close_et=close_et)
+        df = df.copy().sort_index()
+        _assert_daily_identity_utc(df, name)
 
         pref = prefixes.get(name, f"{name}_")
 

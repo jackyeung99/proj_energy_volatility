@@ -134,7 +134,8 @@ def preprocess_equities(
     # 7) Stamp daily identity to ET close converted to UTC (gold standard)
     #    - resample produces an ET-midnight label; convert that label -> ET close -> UTC
     # =============================================================================
-    daily = date_index_to_et_close_utc(daily, close_et=close_et)
+
+    daily = standardize_daily_identity_index(daily, close_et=close_et)
 
     # =============================================================================
     # 8) Derived daily features (logs + realized vol)
@@ -170,16 +171,6 @@ def preprocess_equities_daily(
     base_features_cfg: dict,
     source_cfg: dict,
 ) -> pd.DataFrame:
-    """
-    Build lagged DAILY exogenous features from ETF proxies (prices) and vol indices (levels).
-
-    Expected input:
-      - df: daily wide df (DatetimeIndex) with levels for:
-          price_cols (e.g., HYG, TLT, UNG, USO) and vol_cols (e.g., ^VIX, ^OVX).
-
-    Output:
-      - lagged features only (drops contemporaneous) unless keep_raw_levels=True
-    """
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         raise ValueError("preprocess_equities_daily: df must be a non-empty DataFrame")
     ensure_datetime_index_utc(df)
@@ -191,8 +182,9 @@ def preprocess_equities_daily(
     max_lag = int(base_features_cfg.get("max_lag", 1))
     log_eps = float(base_features_cfg.get("log_eps", 1e-12))
 
-    use_business_days = bool(source_cfg.get("use_business_days", True))
-    ffill = bool(source_cfg.get("ffill", True))
+    # IMPORTANT: do NOT asfreq+ffill before returns
+    align_business_days = bool(source_cfg.get("align_business_days", False))  # default False
+    ffill_rates = bool(source_cfg.get("ffill_rates", True))
     winsor_p = float(source_cfg.get("winsor_p", 0.005))
 
     price_cols = list(source_cfg.get("price_cols", []))
@@ -202,78 +194,85 @@ def preprocess_equities_daily(
     add_absrets = bool(base_features_cfg.get("add_absrets", True))
     add_vol_logs = bool(base_features_cfg.get("add_vol_logs", True))
     winsorize_cols = list(base_features_cfg.get("winsorize_cols", []))
-    keep_raw_levels = bool(base_features_cfg.get("keep_raw_levels", False))
 
-    # normalize daily calendar
-    out = _as_daily(out, freq=freq, how="last")
-    if use_business_days:
-        out = out.asfreq("B")
-    if ffill:
-        out = out.ffill()
+    close_et = time(*map(int, (source_cfg.get("market_close_et", "16:00")).split(":")))
+    # Resample to daily close, keep only observed days
+    # out = _as_daily(out, freq=freq, how="last")
+    out = standardize_daily_identity_index(out, close_et=close_et)
 
-    # Rate Level  -> keep as is 
-    for c in rate_cols:
-        if c not in out.columns:
-            continue
-        out[f"{c}"] = out[c].astype(float)
+    # ---- rates: forward-fill (slow-moving, ok)
+    if rate_cols:
+        for c in rate_cols:
+            if c in out.columns:
+                out[c] = out[c].astype(float)
+        if ffill_rates:
+            out[rate_cols] = out[rate_cols].ffill()
 
-    # price -> log returns (+ abs returns)
+    # ---- price returns (+ abs returns) on observed days ONLY
     for c in price_cols:
         if c not in out.columns:
             continue
-        if (out[c] <= 0).any():
-            raise ValueError(f"preprocess_equities_daily: '{c}' has non-positive values; cannot log.")
+        s = out[c].astype(float)
+
+        # allow missing prices (don’t ffill here)
+        # if non-positive values exist, drop them (bad data) rather than raising
+        s = s.where(s > 0)
+
         out[f"{c}_ret"] = transforms.log_returns(out, c) * 100
         if add_absrets:
             out[f"{c}_absret"] = out[f"{c}_ret"].abs()
 
-    # vol index -> log level
+    # ---- vol index -> log level (on observed days)
     if add_vol_logs:
         for c in vol_cols:
             if c not in out.columns:
                 continue
-            if (out[c] <= 0).any():
-                raise ValueError(f"preprocess_equities_daily: '{c}' has non-positive values; cannot log.")
-            out[f"log_{c}"] = np.log(out[c] + log_eps)
+            s = out[c].astype(float).where(out[c].astype(float) > 0)
+            out[f"log_{c}"] = np.log(s + log_eps)
 
-    # winsorize heavy-tailed daily returns (common for UNG/USO)
+    # winsorize heavy tails
     for c in winsorize_cols:
         if c in out.columns:
             out[c] = _winsorize_series(out[c], winsor_p)
 
-    # select contemporaneous exog base features to lag
+    # collect base exog features
     exog_base: list[str] = []
     for c in rate_cols:
-        if f"{c}" in out.columns:
-            exog_base.append(f"{c}")
+        if c in out.columns:
+            exog_base.append(c)
 
     for c in price_cols:
         if f"{c}_ret" in out.columns:
             exog_base.append(f"{c}_ret")
         if add_absrets and f"{c}_absret" in out.columns:
             exog_base.append(f"{c}_absret")
+
     if add_vol_logs:
         for c in vol_cols:
             lc = f"log_{c}"
             if lc in out.columns:
                 exog_base.append(lc)
 
-    # dedupe, preserve order
+    # dedupe
     seen = set()
     exog_base = [c for c in exog_base if not (c in seen or seen.add(c))]
 
-    # create lags + drop contemporaneous by default
-    # out = _make_lags(out, exog_base, max_lag=max_lag)
-    # if exog_base:
-    #     out = out.drop(columns=exog_base)
+    exog = out[exog_base]
 
-    #  optional: keep raw levels (debug/EDA only)
-    # if not keep_raw_levels:
-    #     drop_raw = [c for c in price_cols + vol_cols if c in out.columns]
-    #     if drop_raw:
-    #         out = out.drop(columns=drop_raw)
+    # Optional: align to business-day grid AFTER feature computation
+    # (This will introduce NaNs on holidays, which is fine; do NOT ffill returns.)
+    if align_business_days:
+        exog = exog.asfreq("B")
 
-    return out[exog_base].dropna()
+        # If you truly want to ffill only rate levels on this grid:
+        if ffill_rates and rate_cols:
+            present_rates = [c for c in rate_cols if c in exog.columns]
+            exog[present_rates] = exog[present_rates].ffill()
+
+
+    # CRITICAL: do NOT dropna here
+    return exog
+
 
 
 
@@ -308,6 +307,8 @@ def preprocess_weather(
     enable_iforest = bool(weather_cfg.get("enable_iforest", True))
     contamination = float(weather_cfg.get("contamination", 0.01))
     random_state = int(base_features_cfg.get("random_state", 99))
+    
+    close_et = time(*map(int, (weather_cfg.get("market_close_et", "16:00")).split(":")))
 
     # 1) align to daily frequency (weather is naturally daily)
     out = out.asfreq(freq)
@@ -355,7 +356,7 @@ def preprocess_weather(
 
     # out = _make_lags(out, lag_cols, max_lag=max_lag)
     # out = out.drop(columns=lag_cols)
-
+    out = standardize_daily_identity_index(out, close_et=close_et)
     return out.dropna()
 
 
@@ -381,30 +382,3 @@ def long_to_wide(df: pd.DataFrame, pivot_by: str = "close") -> pd.DataFrame:
     return wide
 
 
-def preprocess_for_vol_prediction(
-    df: pd.DataFrame,
-    exog_cols: Sequence[str],
-    target_cols: Sequence[str],
-    lag: int = 1,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Prepare exogenous regressors for volatility prediction by:
-      - enforcing stationarity (via transforms.enforce_stationarity)
-      - lagging to avoid look-ahead bias
-      - concatenating with targets and dropping NaNs at the end
-
-    Note: scaling is intentionally omitted here; many volatility models
-    (and your current pipeline) do fine without it. Add scaling outside
-    if you explicitly need it.
-    """
-    out = df.copy()
-
-    X_raw = out[list(exog_cols)]
-    X_stat = transforms.enforce_stationarity(X_raw)
-    X_lagged = X_stat.shift(lag)
-
-    combined = pd.concat([out[list(target_cols)], X_lagged], axis=1).dropna()
-
-    X = combined[X_lagged.columns]
-    y = combined[list(target_cols)]
-    return X, y

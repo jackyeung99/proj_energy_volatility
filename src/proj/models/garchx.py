@@ -41,6 +41,7 @@ class GARCHProxyX(VolatilityModel):
         return df
 
     def fit(self, data: pd.DataFrame):
+        
         # ---- Step 1: fit GARCH on returns (training window)
         r = data["ret"]
         self._garch_res = arch_model(
@@ -89,7 +90,7 @@ class GARCHProxyX(VolatilityModel):
         sigma2 = pd.Series(sigma2, index=data.index, name="sigma2")
         log_sigma2 = np.log(sigma2.replace(0, np.nan))
 
-        regf = self._build_reg_df(data, log_sigma2)
+        regf = self._build_reg_df(data, log_sigma2).dropna()
         Xf = sm.add_constant(regf.drop(columns=["y"]), has_constant="add")
 
         # exp(Xb) gives variance forecast in RV units
