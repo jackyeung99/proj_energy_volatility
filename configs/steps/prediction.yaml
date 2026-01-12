@@ -44,7 +44,7 @@ models:
       q: 1
       mean: Zero
       dist: t
-      x_cols: ["etf_USO_absret", "log_rv_spy", "wx_wind_speed_10m_mean_anom_z"]
+      x_cols: ["log_rv_spy", "macro_DGS2", "etf_USO_absret"]
     fit_options:
       disp: off
       rescale: true
@@ -63,7 +63,7 @@ models:
     enabled: true
     params:
       # use the exog cols above for HAR-RV-X
-      x_cols: ["etf_USO_absret", "log_rv_spy", "wx_wind_speed_10m_mean_anom_z"]
+      x_cols: ["log_rv_spy", "macro_DGS2", "etf_USO_absret"]
     options:
       log_eps: 1.0e-12
 

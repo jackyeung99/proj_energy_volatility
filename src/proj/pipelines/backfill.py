@@ -171,7 +171,6 @@ def predict_backfill(
         # train data through as-of close (compare in UTC)
         df_asof = df[df.index <= asof_close_utc]
         train_df = apply_train_window(df_asof, step_cfg)
-        print(train_df.iloc[-1]) 
 
         base = {
             "run_id": run_id,
@@ -208,23 +207,13 @@ def predict_backfill(
         .sort_index()
     )
 
-    print(results)
-    # =============================================================================
-    # 6) Merge + persist (idempotent)
-    # =============================================================================
-    # if storage.exists(store_key):
-    #     old_df = storage.read_parquet(store_key)
-    #     merged = merge_and_dedup_long(old_df, results, "model")
-    # else:
-    #     merged = results
-
-    # storage.write_parquet(merged, store_key)
-    # return results
+    storage.write_parquet(results, store_key)
+    return results
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=180, help="How many days back to backfill")
+    ap.add_argument("--days", type=int, default=30, help="How many days back to backfill")
     args = ap.parse_args()
 
     logger = setup_logging(os.getenv("LOG_LEVEL", "INFO"), name="proj.backfill_pred_score")
@@ -245,6 +234,7 @@ def main() -> None:
     score_step_cfg = load_config(score_cfg_path)
 
     predict_backfill(storage, cfg, pred_step_cfg, backfill_bdays=args.days)
+    score_predictions(storage, cfg, score_step_cfg)
     
 
 
