@@ -86,21 +86,19 @@ def compute_rolling_logrv_stats(
       - ma_logrv: rolling mean of log(RV)
       - sd_dev_logrv: rolling std of (log(RV) - ma_logrv)
     """
-    x = np.log(gold[realized_col].astype(float) + eps)
+    g = gold.copy().sort_index()
+    g.index = pd.to_datetime(g.index, utc=True)
+
+    x = np.log(g[realized_col].astype(float) + eps)
 
     minp = max(10, window_bd // 3)
-
     ma = x.rolling(window_bd, min_periods=minp).mean()
     dev = x - ma
     sd_dev = dev.rolling(window_bd, min_periods=minp).std(ddof=0)
 
-    return pd.DataFrame(
-        {
-            "ma_logrv": ma,
-            "sd_dev_logrv": sd_dev,
-        },
-        index=gold.index,
-    )
+    out = pd.DataFrame({"ma_logrv": ma, "sd_dev_logrv": sd_dev}, index=g.index)
+    out.index.name = "ts"
+    return out
 
 def _require_k_consecutive(x: pd.Series, k: int = 3) -> pd.Series:
     out = x.copy()
@@ -117,6 +115,7 @@ def add_forecasted_regime_from_gold(
     window_bd: int = 60,
     low_p: float = 0.30,
     high_p: float = 0.70,
+    tolerance_days: int = 10,
 ) -> pd.DataFrame:
     if realized_col not in gold.columns:
         raise ValueError(f"gold missing '{realized_col}'. Available: {list(gold.columns)}")
@@ -125,27 +124,40 @@ def add_forecasted_regime_from_gold(
 
     stats = compute_rolling_logrv_stats(gold, realized_col=realized_col, eps=eps, window_bd=window_bd)
 
-    p = preds.reset_index().rename(columns={preds.index.name or "index": "ts"})
+    # ---- preds: normalize ts and REMOVE any previously-attached stat columns ----
+    p = preds.copy()
+    p = p.reset_index().rename(columns={p.index.name or "index": "ts"})
     p["ts"] = pd.to_datetime(p["ts"], utc=True)
     p = p.sort_values("ts")
 
-    s = stats.reset_index().rename(columns={stats.index.name or "index": "ts"})
-    s["ts"] = pd.to_datetime(s["ts"], utc=True)
-    s = s.sort_values("ts")
+    # drop old baseline/stat columns if they exist to prevent _x/_y suffixing
+    for c in ["ma_logrv", "sd_dev_logrv", "mu_logrv", "sd_logrv"]:
+        if c in p.columns:
+            p = p.drop(columns=[c])
 
+    # (optional) also drop previously computed regime columns if rerunning
+    for c in ["regime_z_pred", "regime_pct_pred", "regime_pct_pred_100", "regime_pred", "regime_pred_stable"]:
+        if c in p.columns:
+            p = p.drop(columns=[c])
+
+    # ---- stats: normalize ts ----
+    s = stats.copy()
+    s.index = pd.to_datetime(s.index, utc=True)
+    s.index.name = "ts"
+    s = s.reset_index().sort_values("ts")
+
+    # ---- merge: attach latest past stats ----
     p = pd.merge_asof(
         p, s,
         on="ts",
         direction="backward",
-        tolerance=pd.Timedelta(days=10),
+        tolerance=pd.Timedelta(days=tolerance_days),
     )
 
-    # drop rows where we couldn't attach baseline stats (early period / missing)
+    # now columns should exist UNSUFFIXED
     p = p.dropna(subset=["ma_logrv", "sd_dev_logrv"])
 
     log_pred = np.log(p["predicted_value"].astype(float) + eps)
-
-    # z-score of deviation from rolling moving average
     denom = p["sd_dev_logrv"].astype(float).clip(lower=1e-12)
     z = (log_pred - p["ma_logrv"]) / denom
 
@@ -158,7 +170,6 @@ def add_forecasted_regime_from_gold(
         ["Low", "High"],
         default="Medium",
     )
-
     p["regime_pred_stable"] = _require_k_consecutive(p["regime_pred"], k=3)
 
     p = p.set_index("ts")

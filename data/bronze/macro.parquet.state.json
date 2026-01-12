@@ -1,10 +1,10 @@
 {
   "config_fingerprint": "3638b4ef5822ae47761b1d7c6e4ae6387a1f76c6ebf87008e8c323cd31a24d2e",
-  "dataset_end": "2026-01-08T00:00:00+00:00",
+  "dataset_end": "2026-01-09T00:00:00+00:00",
   "dataset_start": "2021-01-01T00:00:00+00:00",
-  "last_success_utc": "2026-01-12T00:28:20.497028+00:00",
-  "pull_end": "2026-01-12T00:28:18.480480+00:00",
-  "pull_start": "2026-01-06T00:00:00+00:00",
+  "last_success_utc": "2026-01-12T23:24:27.089546+00:00",
+  "pull_end": "2026-01-12T23:24:25.270355+00:00",
+  "pull_start": "2026-01-07T00:00:00+00:00",
   "rows_written": 3,
   "store_key": "bronze/macro.parquet"
 }
