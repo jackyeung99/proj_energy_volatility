@@ -8,6 +8,24 @@ import pandas as pd
 import logging
 logger = logging.getLogger("proj.scoring")  
 
+def compute_rolling_logrv_stats(
+    gold: pd.DataFrame,
+    realized_col: str,
+    eps: float,
+    window_bd: int = 60,
+) -> pd.DataFrame:
+    x = np.log(gold[realized_col].astype(float) + eps)
+
+    mu = x.rolling(window_bd, min_periods=max(10, window_bd // 3)).mean()
+    sd = x.rolling(window_bd, min_periods=max(10, window_bd // 3)).std(ddof=0)
+
+    return pd.DataFrame(
+        {
+            "mu_logrv": mu,
+            "sd_logrv": sd,
+        },
+        index=gold.index,
+    )
 
 def score_predictions(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
     files_cfg = step_cfg["files"]
@@ -63,43 +81,100 @@ def score_predictions(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame
     preds_t = preds_t.sort_values("ts")
     gold_t  = gold_t.sort_values("ts")
 
+
+    stats = compute_rolling_logrv_stats(
+        gold=gold,
+        realized_col=realized_col,
+        eps=eps,
+        window_bd=60,
+    )
+
+    stats_t = (
+        stats.reset_index()
+            .rename(columns={stats.index.name or "index": "ts"})
+    )
+    stats_t["ts"] = pd.to_datetime(stats_t["ts"], utc=True)
+    stats_t = stats_t.sort_values("ts")
+
+    # merge rolling stats into predictions using BACKWARD join
+    preds_t = pd.merge_asof(
+        preds_t,
+        stats_t,
+        on="ts",
+        direction="backward",
+        tolerance=pd.Timedelta(days=7),  # weekends / holidays safe
+    )
+
+    
+    #forecasted regime (available even for last prediction)
+    low_z, high_z = -0.75, 0.75
+
+    log_pred = np.log(preds_t["predicted_value"].astype(float) + eps)
+    z_pred = (log_pred - preds_t["mu_logrv"]) / preds_t["sd_logrv"]
+
+    preds_t["regime_z_pred"] = z_pred
+    preds_t["regime_pred"] = np.select(
+        [z_pred < low_z, z_pred > high_z],
+        ["Low", "High"],
+        default="Medium",
+    )
+
+    #join realized volatility for scoring
+
     joined = pd.merge_asof(
         preds_t,
         gold_t[["ts", realized_col]],
         on="ts",
-        direction="nearest",   # change to "backward" if you only want earlier realized values
+        direction="nearest",
         tolerance=tol,
     )
 
-    joined = joined.dropna(subset=[realized_col])
-    if joined.empty:
+    # only rows with realized get QLIKE
+    joined["is_scored"] = joined[realized_col].notna()
+
+    scored = joined[joined["is_scored"]].copy()
+    if scored.empty:
         logging.warning("Not enough data to score")
         return None
 
-    joined["qlike"] = qlike_arr(joined[realized_col], joined["predicted_value"], eps=eps)
+    scored["qlike"] = qlike_arr(
+        scored[realized_col],
+        scored["predicted_value"],
+        eps=eps,
+    )
 
-    joined = joined.sort_values(["model", "ts"])
+    # ------------------------------------------------------------------
+    # 4) rolling QLIKE (ignore unscored rows)
+    # ------------------------------------------------------------------
+    scored = scored.sort_values(["model", "ts"])
 
-    joined["weekly_rolling_avg_qlike"] = (
-        joined.groupby("model")["qlike"]
+    scored["weekly_rolling_avg_qlike"] = (
+        scored.groupby("model")["qlike"]
             .rolling(window=weekly_bd, min_periods=1)
             .mean()
             .reset_index(level=0, drop=True)
     )
 
-    joined["monthly_rolling_avg_qlike"] = (
-        joined.groupby("model")["qlike"]
+    scored["monthly_rolling_avg_qlike"] = (
+        scored.groupby("model")["qlike"]
             .rolling(window=monthly_bd, min_periods=1)
             .mean()
             .reset_index(level=0, drop=True)
     )
 
-    out = joined.rename(columns={"ts": "forecasted_date"})[[
+    # ------------------------------------------------------------------
+    # 5) final output
+    # ------------------------------------------------------------------
+    out = scored.rename(columns={"ts": "forecasted_date"})[[
         "forecasted_date",
         "model",
+        "predicted_value",
+        realized_col,
         "qlike",
         "weekly_rolling_avg_qlike",
         "monthly_rolling_avg_qlike",
+        "regime_pred",
+        "regime_z_pred",
     ]].sort_values(["forecasted_date", "model"]).reset_index(drop=True)
 
     storage.write_parquet(out, out_path)
