@@ -79,30 +79,35 @@ def compute_rolling_logrv_stats(
     eps: float,
     window_bd: int = 60,
 ) -> pd.DataFrame:
+    """
+    Rolling stats in log-space, anchored to a rolling moving average baseline.
+
+    Returns:
+      - ma_logrv: rolling mean of log(RV)
+      - sd_dev_logrv: rolling std of (log(RV) - ma_logrv)
+    """
     x = np.log(gold[realized_col].astype(float) + eps)
 
-    mu = x.rolling(window_bd, min_periods=max(10, window_bd // 3)).mean()
-    sd = x.rolling(window_bd, min_periods=max(10, window_bd // 3)).std(ddof=0)
+    minp = max(10, window_bd // 3)
+
+    ma = x.rolling(window_bd, min_periods=minp).mean()
+    dev = x - ma
+    sd_dev = dev.rolling(window_bd, min_periods=minp).std(ddof=0)
 
     return pd.DataFrame(
         {
-            "mu_logrv": mu,
-            "sd_logrv": sd,
+            "ma_logrv": ma,
+            "sd_dev_logrv": sd_dev,
         },
         index=gold.index,
     )
 
 def _require_k_consecutive(x: pd.Series, k: int = 3) -> pd.Series:
     out = x.copy()
-    # whenever the value changes, start a new run
     run_id = (x != x.shift(1)).cumsum()
     run_len = x.groupby(run_id).cumcount() + 1
-    # only accept the new regime once it has lasted k days; otherwise keep previous
     out[run_len < k] = np.nan
-    out = out.ffill().fillna(x.iloc[0])
-    return out
-
-
+    return out.ffill().fillna(x.iloc[0])
 
 def add_forecasted_regime_from_gold(
     preds: pd.DataFrame,
@@ -114,7 +119,7 @@ def add_forecasted_regime_from_gold(
     high_p: float = 0.70,
 ) -> pd.DataFrame:
     if realized_col not in gold.columns:
-        raise ValueError(f"gold missing '{realized_col}' for regime stats. Available: {list(gold.columns)}")
+        raise ValueError(f"gold missing '{realized_col}'. Available: {list(gold.columns)}")
     if "predicted_value" not in preds.columns:
         raise ValueError("preds missing 'predicted_value'")
 
@@ -135,13 +140,19 @@ def add_forecasted_regime_from_gold(
         tolerance=pd.Timedelta(days=10),
     )
 
+    # drop rows where we couldn't attach baseline stats (early period / missing)
+    p = p.dropna(subset=["ma_logrv", "sd_dev_logrv"])
+
     log_pred = np.log(p["predicted_value"].astype(float) + eps)
-    z = (log_pred - p["mu_logrv"]) / p["sd_logrv"]
+
+    # z-score of deviation from rolling moving average
+    denom = p["sd_dev_logrv"].astype(float).clip(lower=1e-12)
+    z = (log_pred - p["ma_logrv"]) / denom
 
     p["regime_z_pred"] = z
-    p["regime_pct_pred"] = norm.cdf(z).clip(0.0, 1.0)          # 0..1
-    p["regime_pct_pred_100"] = 100.0 * p["regime_pct_pred"]    # 0..100
-    
+    p["regime_pct_pred"] = norm.cdf(z).clip(0.0, 1.0)
+    p["regime_pct_pred_100"] = 100.0 * p["regime_pct_pred"]
+
     p["regime_pred"] = np.select(
         [p["regime_pct_pred"] < low_p, p["regime_pct_pred"] > high_p],
         ["Low", "High"],
