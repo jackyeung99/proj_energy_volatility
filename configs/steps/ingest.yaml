@@ -19,7 +19,7 @@ sources:
     enabled: true
     store_path: bronze/equities_daily.parquet
     provider: yfin
-    symbols: ["USO", "UNG", "HYG", "TLT"]
+    symbols: ["XLE", "SPY", "USO", "UNG", "HYG", "TLT"]
     interval: "1d"
 
   macro:

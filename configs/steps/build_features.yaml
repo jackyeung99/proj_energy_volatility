@@ -27,6 +27,7 @@ sources:
     # --- column roles
     price_cols:  ["HYG", "TLT", "UNG", "USO"]      # transformed to log returns
     vol_cols: []         # transformed to log levels
+    rate_cols: ["XLE", "SPY"]
 
     # --- feature engineering
     features:

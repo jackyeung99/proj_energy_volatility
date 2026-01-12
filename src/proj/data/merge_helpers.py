@@ -31,6 +31,15 @@ def _prefix_cols(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     out.columns = [f"{prefix}{c}" for c in out.columns]
     return out
 
+def _prefix_cols_except(df: pd.DataFrame, prefix: str, exclude: set[str]) -> pd.DataFrame:
+    rename = {}
+    for c in df.columns:
+        if c in exclude:
+            rename[c] = c
+        else:
+            rename[c] = f"{prefix}{c}"
+    return df.rename(columns=rename)
+
 
 def _validate_lags_only(df: pd.DataFrame, name: str, allow: Optional[Sequence[str]] = None) -> None:
     """
@@ -95,10 +104,17 @@ def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.Data
         "weather": "wx_",
     }
 
+    # columns that should NEVER be prefixed
+    no_prefix_cols = {"XLE", "SPY"}
+
     close_et = getattr(spec, "close_et", time(16, 0))
 
-    # 1) Anchor (defines the index)
-    anchor = standardize_daily_identity_index(datasets[spec.anchor_name], spec.anchor_name, close_et=close_et)
+    # 1) Anchor
+    anchor = standardize_daily_identity_index(
+        datasets[spec.anchor_name],
+        spec.anchor_name,
+        close_et=close_et,
+    )
 
     if spec.start_date is not None:
         anchor = anchor.loc[anchor.index >= pd.Timestamp(spec.start_date, tz="UTC")]
@@ -107,7 +123,7 @@ def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.Data
 
     out = anchor.copy()
 
-    # 2) Merge remaining datasets (all standardized to same identity index)
+    # 2) Merge remaining datasets
     for name, df in datasets.items():
         if name == spec.anchor_name:
             continue
@@ -115,11 +131,16 @@ def merge_to_gold(datasets: Dict[str, pd.DataFrame], spec: MergeSpec) -> pd.Data
         df = standardize_daily_identity_index(df, name, close_et=close_et)
 
         pref = prefixes.get(name, f"{name}_")
-        df = _prefix_cols(df, pref)
+
+        if name == "equities_daily":
+            df = _prefix_cols_except(df, pref, exclude=no_prefix_cols)
+        else:
+            df = _prefix_cols(df, pref)
 
         out = out.join(df, how=spec.join_how)
 
     return out
+
 
 def merge_and_dedup(
     old_df: pd.DataFrame,

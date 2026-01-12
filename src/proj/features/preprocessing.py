@@ -56,6 +56,7 @@ def drop_outlier_intraday_returns(df: pd.DataFrame, cols: list[str], max_abs_ret
         mask &= df[c].abs() <= max_abs_return
     return df.loc[mask]
 
+
 # ----------------------------
 # Equities: intraday -> daily realized measures
 # ----------------------------
@@ -80,6 +81,7 @@ def preprocess_equities(
     log_eps = float(source_cfg.get("log_eps", 1e-12))
     close_et = time(*map(int, (source_cfg.get("market_close_et", "16:00")).split(":")))
     max_abs = float(source_cfg.get("max_abs_intraday_ret_pct", 5.0))  
+    
 
     # =============================================================================
     # 2) Validate + standardize index (tz-aware UTC)
@@ -92,9 +94,10 @@ def preprocess_equities(
     # =============================================================================
     # 3) Intraday features (returns, idio residuals, RV components)
     # =============================================================================
-
     out["XLE_r"] = transforms.log_returns(out, "XLE") * 100
     out["SPY_r"] = transforms.log_returns(out, "SPY") * 100
+
+    # still drop remaining extreme returns (extra safety net)
     out = drop_outlier_intraday_returns(out, ["XLE_r", "SPY_r"], max_abs)
     out = out.dropna(subset=["XLE_r", "SPY_r"])
 
@@ -108,13 +111,11 @@ def preprocess_equities(
 
 
     # =============================================================================
-    # 4) Daily aggregation by ET trading day (not UTC midnight)
+    # 5) Daily aggregation by ET trading day (not UTC midnight)
     # =============================================================================
     out_et = out.tz_convert(ET)
 
     daily = out_et.resample(freq).agg(
-        xle=("XLE", "last"),
-        spy=("SPY", "last"),
         rv_xle=("xle_r_sq", "sum"),
         rv_spy=("spy_r_sq", "sum"),
         rv_idio=("idio_sq", "sum"),
@@ -125,18 +126,18 @@ def preprocess_equities(
     )
 
     # =============================================================================
-    # 5) Coverage filter
+    # 6) Coverage filter
     # =============================================================================
     daily = daily.loc[daily["n_intra"] >= min_bins].copy()
 
     # =============================================================================
-    # 6) Stamp daily identity to ET close converted to UTC (gold standard)
+    # 7) Stamp daily identity to ET close converted to UTC (gold standard)
     #    - resample produces an ET-midnight label; convert that label -> ET close -> UTC
     # =============================================================================
     daily = date_index_to_et_close_utc(daily, close_et=close_et)
 
     # =============================================================================
-    # 7) Derived daily features (logs + realized vol)
+    # 8) Derived daily features (logs + realized vol)
     # =============================================================================
     daily["log_rv_xle"]  = np.log(daily["rv_xle"]  + log_eps)
     daily["log_rv_spy"]  = np.log(daily["rv_spy"]  + log_eps)
@@ -147,10 +148,10 @@ def preprocess_equities(
     daily["rvol_idio"] = np.sqrt(daily["rv_idio"].clip(lower=0))
 
     # =============================================================================
-    # 8) Final column order
+    # 9) Final column order
     # =============================================================================
     cols = [
-        "xle", "spy", "ret_xle", "ret_spy", "ret_idio",
+        "ret_xle", "ret_spy", "ret_idio",
         "rv_xle", "rv_spy", "rv_idio",
         "log_rv_xle", "log_rv_spy", "log_rv_idio",
         "rvol_xle", "rvol_spy", "rvol_idio",
@@ -214,7 +215,7 @@ def preprocess_equities_daily(
     for c in rate_cols:
         if c not in out.columns:
             continue
-        out[f"{c}_rate"] = out[c].astype(float)
+        out[f"{c}"] = out[c].astype(float)
 
     # price -> log returns (+ abs returns)
     for c in price_cols:
@@ -243,8 +244,8 @@ def preprocess_equities_daily(
     # select contemporaneous exog base features to lag
     exog_base: list[str] = []
     for c in rate_cols:
-        if f"{c}_rate" in out.columns:
-            exog_base.append(f"{c}_rate")
+        if f"{c}" in out.columns:
+            exog_base.append(f"{c}")
 
     for c in price_cols:
         if f"{c}_ret" in out.columns:
