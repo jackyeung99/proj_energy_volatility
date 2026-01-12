@@ -23,7 +23,7 @@ from proj.utils.config import load_config
 from proj.utils.logging import setup_logging, log_step
 from proj.data.storage import make_storage
 
-from proj.pipelines.prediction import apply_train_window, model_factory
+from proj.pipelines.prediction import apply_train_window, model_factory, add_forecasted_regime_from_gold
 from proj.pipelines.scoring import score_predictions
 
 
@@ -197,6 +197,9 @@ def predict_backfill(
                 raise ValueError(f"{model.name} produced invalid variance forecast: {var_hat}")
 
             model_id = spec.get("name") or model.name
+
+
+            
             rows.append({**base, "model": model_id, "predicted_value": var_hat})
 
 
@@ -207,8 +210,19 @@ def predict_backfill(
         .sort_index()
     )
 
-    storage.write_parquet(results, store_key)
-    return results
+    merged = add_forecasted_regime_from_gold(
+        preds=results,
+        gold=df_asof,        # has column "rv" after renaming
+        realized_col="rv",
+        eps=1e-12,
+        window_bd=60,
+        low_z=-0.5,
+        high_z=0.5,
+    )
+
+    storage.write_parquet(merged, store_key)
+
+    return merged
 
 
 def main() -> None:
