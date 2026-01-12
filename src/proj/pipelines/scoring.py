@@ -92,11 +92,14 @@ def score_predictions(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame
             .rolling(window=monthly_bd, min_periods=1)
             .mean()
             .reset_index(level=0, drop=True)
-    )
+    )   
+
 
     out = joined.rename(columns={"ts": "forecasted_date"})[[
         "forecasted_date",
         "model",
+        "predicted_value",
+        "rv_xle",
         "qlike",
         "weekly_rolling_avg_qlike",
         "monthly_rolling_avg_qlike",

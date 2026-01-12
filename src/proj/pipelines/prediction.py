@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import yaml
+from scipy.stats import norm
 
 from proj.models.ewma import EWMAVariance
 from proj.models.garch import GARCHModel
@@ -91,62 +92,64 @@ def compute_rolling_logrv_stats(
         index=gold.index,
     )
 
+def _require_k_consecutive(x: pd.Series, k: int = 3) -> pd.Series:
+    out = x.copy()
+    # whenever the value changes, start a new run
+    run_id = (x != x.shift(1)).cumsum()
+    run_len = x.groupby(run_id).cumcount() + 1
+    # only accept the new regime once it has lasted k days; otherwise keep previous
+    out[run_len < k] = np.nan
+    out = out.ffill().fillna(x.iloc[0])
+    return out
+
+
+
 def add_forecasted_regime_from_gold(
     preds: pd.DataFrame,
     gold: pd.DataFrame,
     realized_col: str,
     eps: float = 1e-12,
     window_bd: int = 60,
-    low_z: float = -0.5,
-    high_z: float = 0.5,
+    low_p: float = 0.30,
+    high_p: float = 0.70,
 ) -> pd.DataFrame:
-    """
-    Add forecasted regime columns to predictions:
-      - regime_z_pred
-      - regime_pred (Low/Medium/High)
-
-    Threshold stats are computed from realized vol in `gold` using rolling log stats.
-    For each prediction timestamp, we attach the most recent (past) stats via merge_asof(backward).
-    """
     if realized_col not in gold.columns:
         raise ValueError(f"gold missing '{realized_col}' for regime stats. Available: {list(gold.columns)}")
     if "predicted_value" not in preds.columns:
         raise ValueError("preds missing 'predicted_value'")
 
-    # rolling stats on realized vol (index must be UTC datetime)
     stats = compute_rolling_logrv_stats(gold, realized_col=realized_col, eps=eps, window_bd=window_bd)
 
-    # preds index -> ts
     p = preds.reset_index().rename(columns={preds.index.name or "index": "ts"})
     p["ts"] = pd.to_datetime(p["ts"], utc=True)
     p = p.sort_values("ts")
 
-    # stats index -> ts
     s = stats.reset_index().rename(columns={stats.index.name or "index": "ts"})
     s["ts"] = pd.to_datetime(s["ts"], utc=True)
     s = s.sort_values("ts")
 
-    # attach most recent stats available at prediction time (no look-ahead)
     p = pd.merge_asof(
-        p,
-        s,
+        p, s,
         on="ts",
         direction="backward",
-        tolerance=pd.Timedelta(days=10),  # weekend/holiday buffer
+        tolerance=pd.Timedelta(days=10),
     )
 
-    # compute z-score on log(pred)
     log_pred = np.log(p["predicted_value"].astype(float) + eps)
     z = (log_pred - p["mu_logrv"]) / p["sd_logrv"]
 
     p["regime_z_pred"] = z
+    p["regime_pct_pred"] = norm.cdf(z).clip(0.0, 1.0)          # 0..1
+    p["regime_pct_pred_100"] = 100.0 * p["regime_pct_pred"]    # 0..100
+    
     p["regime_pred"] = np.select(
-        [z < low_z, z > high_z],
+        [p["regime_pct_pred"] < low_p, p["regime_pct_pred"] > high_p],
         ["Low", "High"],
         default="Medium",
     )
 
-    # restore index
+    p["regime_pred_stable"] = _require_k_consecutive(p["regime_pred"], k=3)
+
     p = p.set_index("ts")
     p.index.name = preds.index.name or "forecast_close_utc"
     return p
@@ -288,10 +291,6 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
         preds=merged,
         gold=df_asof,        # has column "rv" after renaming
         realized_col="rv",
-        eps=1e-12,
-        window_bd=60,
-        low_z=-0.5,
-        high_z=0.5,
     )
 
     storage.write_parquet(merged, store_key)
@@ -301,10 +300,6 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
         preds=results,
         gold=df_asof,
         realized_col="rv",
-        eps=1e-12,
-        window_bd=60,
-        low_z=-0.5,
-        high_z=0.5,
     )
 
     return results_with_regime

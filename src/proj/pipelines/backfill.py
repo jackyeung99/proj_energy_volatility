@@ -111,7 +111,7 @@ def predict_backfill(
     bad = df[["ret", "rv"]].isna().any()
     print("ret/rv NaNs?", bad)
 
-    X_cols = ["etf_USO_absret", "log_rv_spy", "wx_wind_speed_10m_mean_anom_z"] # whatever GARCHProxyX uses
+    X_cols = ["log_rv_spy", "macro_DGS2", "etf_USO_absret"]# whatever GARCHProxyX uses
     print("X NaNs?", df[X_cols].isna().sum().sort_values(ascending=False).head(10))
     print("Any inf?", np.isinf(df[X_cols]).any().any())
 
@@ -214,10 +214,6 @@ def predict_backfill(
         preds=results,
         gold=df_asof,        # has column "rv" after renaming
         realized_col="rv",
-        eps=1e-12,
-        window_bd=60,
-        low_z=-0.5,
-        high_z=0.5,
     )
 
     storage.write_parquet(merged, store_key)
