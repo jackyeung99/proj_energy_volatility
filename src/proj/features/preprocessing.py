@@ -138,7 +138,7 @@ def preprocess_equities_daily(
     out = ensure_datetime_index_utc(df, name="equities_daily_raw").copy().sort_index()
 
     # ensure one row per day, then canonical identity
-    out = out.resample(freq).last()
+    # out = out.resample(freq).last()
     out = standardize_daily_identity_index(out, close_et=close_et)
 
     # rates (levels) can be ffilled
@@ -150,11 +150,18 @@ def preprocess_equities_daily(
 
     # price returns (pct) on observed days (gaps in index are fine; no ffill)
     for c in price_cols:
-        if c in out.columns:
-            s = out[c].astype(float).where(out[c].astype(float) > 0)
-            out[f"{c}_ret"] = np.log(s).diff() * 100.0
-            if add_absrets:
-                out[f"{c}_absret"] = out[f"{c}_ret"].abs()
+        if c not in out.columns:
+            continue
+        
+        s = out[c].astype(float)
+
+        # allow missing prices (don’t ffill here)
+        # if non-positive values exist, drop them (bad data) rather than raising
+        s = s.where(s > 0)
+
+        out[f"{c}_ret"] = transforms.log_returns(out, c) * 100
+        if add_absrets:
+            out[f"{c}_absret"] = out[f"{c}_ret"].abs()
 
     # vol index logs (levels must be >0)
     if add_vol_logs:

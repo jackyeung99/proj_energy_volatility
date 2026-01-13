@@ -23,4 +23,4 @@ steps:
 
   scoring:
     enabled: true
-    congig: steps/scoring.yaml
+    config: steps/scoring.yaml

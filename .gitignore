@@ -1,6 +1,7 @@
 .venv
 .env
 notebooks/.cache.sqlite
+notebooks/test.ipynb
 **/__pycache__/
 __init__.py 
 
