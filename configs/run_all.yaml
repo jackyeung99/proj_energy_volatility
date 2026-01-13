@@ -4,7 +4,7 @@ storage:
 
 steps:
   ingestion:
-    enabled: false
+    enabled: true
     config: steps/ingest.yaml
 
   features:

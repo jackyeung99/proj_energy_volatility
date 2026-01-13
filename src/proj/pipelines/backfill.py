@@ -37,30 +37,31 @@ PRED_CFG    = Path("configs/steps/prediction.yaml")
 SCORE_CFG   = Path("configs/steps/scoring.yaml")
 
 
-def next_trading_day(index: pd.DatetimeIndex, ts: pd.Timestamp) -> Optional[pd.Timestamp]:
-    """
-    Return the next timestamp in `index` after `ts`.
-    Works even if `ts` is not exactly contained in the index (uses searchsorted).
-    """
-    if not isinstance(index, pd.DatetimeIndex):
-        index = pd.DatetimeIndex(index)
+# def next_trading_day(index: pd.DatetimeIndex, ts: pd.Timestamp) -> Optional[pd.Timestamp]:
+#     """
+#     Return the next timestamp in `index` after `ts`.
+#     Works even if `ts` is not exactly contained in the index (uses searchsorted).
+#     """
+#     if not isinstance(index, pd.DatetimeIndex):
+#         index = pd.DatetimeIndex(index)
 
-    index = index.sort_values()
+#     index = index.sort_values()
 
-    ts = pd.Timestamp(ts)
-    # Ensure comparable tz
-    if index.tz is not None and ts.tzinfo is None:
-        ts = ts.tz_localize(index.tz)
-    elif index.tz is None and ts.tzinfo is not None:
-        ts = ts.tz_convert(None)
-    elif index.tz is not None and ts.tzinfo is not None and index.tz != ts.tzinfo:
-        ts = ts.tz_convert(index.tz)
+#     ts = pd.Timestamp(ts)
+#     # Ensure comparable tz
+#     if index.tz is not None and ts.tzinfo is None:
+#         ts = ts.tz_localize(index.tz)
+#     elif index.tz is None and ts.tzinfo is not None:
+#         ts = ts.tz_convert(None)
+#     elif index.tz is not None and ts.tzinfo is not None and index.tz != ts.tzinfo:
+#         ts = ts.tz_convert(index.tz)
 
-    # find insertion position strictly after ts
-    pos = index.searchsorted(ts, side="right")
-    if pos >= len(index):
-        return None
-    return index[pos]
+#     # find insertion position strictly after ts
+#     pos = index.searchsorted(ts, side="right")
+#     if pos >= len(index):
+#         return None
+#     return index[pos]
+
 
 
 def predict_backfill(
@@ -144,7 +145,6 @@ def predict_backfill(
 
     # Take last N available trading days
     asof_dates_et = asof_index_et[-backfill_bdays:]
-
     # =============================================================================
     # 4) Prepare models
     # =============================================================================
@@ -157,16 +157,23 @@ def predict_backfill(
 
     rows: list[dict[str, object]] = []
 
+
     # =============================================================================
     # 5) Walk-forward loop
     # =============================================================================
     for asof_close_et in asof_dates_et:
-        forecast_close_et = next_trading_day(asof_index_et, asof_close_et)
+        # Assume next_business_day_et returns the date so manually make it close 
+        forecast_close_et = (
+                        next_business_day_et(asof_close_et)
+                        + pd.Timedelta(hours=16)
+                    )
+        
         if forecast_close_et is None:
             continue
 
         asof_close_utc = asof_close_et.tz_convert("UTC")
-        forecast_close_utc = forecast_close_et.tz_convert("UTC")
+        forecast_close_utc = forecast_close_et.tz_convert("UTC") 
+    
 
         # train data through as-of close (compare in UTC)
         df_asof = df[df.index <= asof_close_utc]

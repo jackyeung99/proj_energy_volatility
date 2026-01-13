@@ -173,7 +173,7 @@ def add_forecasted_regime_from_gold(
     p["regime_pred_stable"] = _require_k_consecutive(p["regime_pred"], k=3)
 
     p = p.set_index("ts")
-    p.index.name = preds.index.name or "forecast_close_utc"
+    p.index.name = "forecast_close_utc"
     return p
 
 # -----------------------

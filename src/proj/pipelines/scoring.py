@@ -52,7 +52,7 @@ def score_predictions(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame
 
 
     # --- join: robust time join (index -> column + merge_asof tolerance) ---
-    tol = pd.Timedelta(hours=2)
+    tol = pd.Timedelta(hours=5)
 
     preds_t = preds.reset_index().rename(columns={preds.index.name or "index": "ts"})
     gold_t  = gold.reset_index().rename(columns={gold.index.name  or "index": "ts"})
