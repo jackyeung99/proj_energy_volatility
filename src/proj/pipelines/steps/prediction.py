@@ -7,7 +7,7 @@ import pandas as pd
 
 from proj.utils.dates import utc_run_id
 
-from proj.pipelines._predict_utils import (
+from proj.pipelines.steps._predict_utils import (
     parse_predict_cfg,
     apply_train_window,
     load_and_standardize_modeling_table,

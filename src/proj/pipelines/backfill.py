@@ -18,9 +18,9 @@ from proj.utils.logging import setup_logging, log_step
 from proj.data.storage import make_storage
 
 
-from proj.pipelines.scoring import score_predictions
+from proj.pipelines.steps.scoring import score_predictions
 
-from proj.pipelines._predict_utils import (
+from proj.pipelines.steps._predict_utils import (
     parse_predict_cfg,
     apply_train_window,
     load_and_standardize_modeling_table,

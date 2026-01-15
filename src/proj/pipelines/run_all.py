@@ -10,11 +10,11 @@ from proj.utils.config import load_config
 from proj.utils.logging import setup_logging, log_step
 from proj.data.storage import make_storage
 
-from proj.pipelines.ingestion import ingest
-from proj.pipelines.merge import merge_data
-from proj.pipelines.build_features import construct_features
-from proj.pipelines.prediction import predict_next
-from proj.pipelines.scoring import score_predictions
+from proj.pipelines.steps.ingestion import ingest
+from proj.pipelines.steps.merge import merge_data
+from proj.pipelines.steps.build_features import construct_features
+from proj.pipelines.steps.prediction import predict_next
+from proj.pipelines.steps.scoring import score_predictions
 
 
 STEP_DISPATCH = {
