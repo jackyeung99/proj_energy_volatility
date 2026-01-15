@@ -11,20 +11,24 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from proj.models.ewma import EWMAVariance
-from proj.models.garch import GARCHModel
-from proj.models.garchx import GARCHProxyX
-from proj.models.harrv import HARRV
-from proj.models.base import VolatilityModel
-from proj.data.merge_helpers import merge_and_dedup_long
 from proj.utils.dates import  *
 
 from proj.utils.config import load_config
 from proj.utils.logging import setup_logging, log_step
 from proj.data.storage import make_storage
 
-from proj.pipelines.prediction import apply_train_window, model_factory, add_forecasted_regime_from_gold
+
 from proj.pipelines.scoring import score_predictions
+
+from proj.pipelines._predict_utils import (
+    parse_predict_cfg,
+    apply_train_window,
+    load_and_standardize_modeling_table,
+    resolve_prediction_times,
+    get_enabled_model_specs,
+    forecast_models,
+    merge_and_persist_predictions,
+)
 
 
 from typing import Optional
@@ -37,31 +41,61 @@ PRED_CFG    = Path("configs/steps/prediction.yaml")
 SCORE_CFG   = Path("configs/steps/scoring.yaml")
 
 
-# def next_trading_day(index: pd.DatetimeIndex, ts: pd.Timestamp) -> Optional[pd.Timestamp]:
-#     """
-#     Return the next timestamp in `index` after `ts`.
-#     Works even if `ts` is not exactly contained in the index (uses searchsorted).
-#     """
-#     if not isinstance(index, pd.DatetimeIndex):
-#         index = pd.DatetimeIndex(index)
+def manual_walk_forward(
+    df: pd.DataFrame,
+    asof_closes_utc: pd.DatetimeIndex | list[pd.Timestamp],
+    *,
+    step_cfg: dict,
+    close_et,
+    run_id: str,
+) -> pd.DataFrame:
+    """
+    Walk-forward 1-step-ahead forecasts across a set of as-of close timestamps (UTC).
+    Returns a single DataFrame of forecasts for this run_id.
+    """
+    enabled_specs = get_enabled_model_specs(step_cfg)
 
-#     index = index.sort_values()
+    out = []
+    asof_closes_utc = pd.DatetimeIndex(pd.to_datetime(asof_closes_utc, utc=True)).sort_values()
 
-#     ts = pd.Timestamp(ts)
-#     # Ensure comparable tz
-#     if index.tz is not None and ts.tzinfo is None:
-#         ts = ts.tz_localize(index.tz)
-#     elif index.tz is None and ts.tzinfo is not None:
-#         ts = ts.tz_convert(None)
-#     elif index.tz is not None and ts.tzinfo is not None and index.tz != ts.tzinfo:
-#         ts = ts.tz_convert(index.tz)
+    for asof_close_utc in asof_closes_utc:
+        # Use the as-of close as "now" for consistent walk-forward timing logic
+        asof_date_et, asof_close_utc2, forecast_date_et, forecast_close_utc = resolve_prediction_times(
+            now_utc=asof_close_utc.to_pydatetime(),
+            close_et=close_et,
+        )
 
-#     # find insertion position strictly after ts
-#     pos = index.searchsorted(ts, side="right")
-#     if pos >= len(index):
-#         return None
-#     return index[pos]
+        # Safety: keep a single source of truth
+        asof_close_utc = pd.Timestamp(asof_close_utc2)
 
+        # Train on data available up to this as-of timestamp
+        df_asof = df.loc[df.index <= asof_close_utc]
+        train_df = apply_train_window(df_asof, step_cfg)
+
+        base_row = {
+            "run_id": run_id,
+            "asof_date_et": pd.Timestamp(asof_date_et).normalize(),
+            "forecast_date_et": pd.Timestamp(forecast_date_et).normalize(),
+            "asof_close_utc": pd.Timestamp(asof_close_utc),
+            "forecast_close_utc": pd.Timestamp(forecast_close_utc),
+        }
+
+        preds = forecast_models(
+            train_df=train_df,
+            enabled_specs=enabled_specs,
+            base_row=base_row,
+        )
+
+        if preds is None or len(preds) == 0:
+            continue
+
+        out.append(preds)
+
+    if not out:
+        # Return empty frame with no crash, caller can handle
+        return pd.DataFrame()
+
+    return pd.concat(out, ignore_index=True)
 
 
 def predict_backfill(
@@ -69,163 +103,66 @@ def predict_backfill(
     global_cfg: dict,
     step_cfg: dict,
     backfill_bdays: int = 252,
-    end_date_et: Optional[str] = None,  # "YYYY-MM-DD" in ET
 ) -> pd.DataFrame:
     """
-    Backfill 1-step-ahead variance forecasts for last N *available trading days*.
-
-    For each as-of ET close timestamp t_et in the dataset:
-      - train on data through t_close_utc
-      - forecast for the next available trading close timestamp in the dataset
+    Orchestrates 1-step-ahead variance forecasts for enabled models.
+    Writes merged history to store_key, returns only this run's forecasts.
     """
-
-    # =============================================================================
-    # 1) Load config
-    # =============================================================================
     run_id = utc_run_id()
 
-    data_cfg = step_cfg.get("data", {}) or {}
-    run_cfg = step_cfg.get("run", {}) or {}
+    in_key, store_key, close_et, returns_col, rv_col = parse_predict_cfg(step_cfg)
 
-    in_key = data_cfg["data_dir"]
-    store_key = data_cfg["store_path"]
-
-    returns_col = data_cfg.get("returns_col", "ret")
-    rv_col = data_cfg.get("realized_var_col", "rv")
-
-    close_str = run_cfg.get("market_close_et") or "16:00"
-    hh, mm = (int(x) for x in close_str.split(":"))
-    close_et = time(hh, mm)
-
-    # =============================================================================
-    # 2) Load + validate data (UTC index)
-    # =============================================================================
-    df = storage.read_parquet(in_key)
-    df = ensure_datetime_index_utc(df).sort_index()
-
-    missing = [c for c in (returns_col, rv_col) if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}. Available: {list(df.columns)}")
-
-    df = df.rename(columns={returns_col: "ret", rv_col: "rv"})
-
-    bad = df[["ret", "rv"]].isna().any()
-    print("ret/rv NaNs?", bad)
-
-    X_cols = ["log_rv_spy", "macro_DGS2", "etf_USO_absret"]# whatever GARCHProxyX uses
-    print("X NaNs?", df[X_cols].isna().sum().sort_values(ascending=False).head(10))
-    print("Any inf?", np.isinf(df[X_cols]).any().any())
-
-    # =============================================================================
-    # 3) Build the ET-close trading index from the data itself
-    # =============================================================================
-    df_index_et = df.index.tz_convert("America/New_York")
-
-    # This is your "trading calendar": ET-close timestamps actually present in the data.
-    asof_index_et = pd.DatetimeIndex(df_index_et).sort_values()
-
-    if asof_index_et.empty:
-        raise ValueError("No rows in modeling table.")
-
-    # Handle end_date_et: interpret as "that day's market close"
-    if end_date_et is not None:
-        end_close_et = (
-            pd.Timestamp(end_date_et)
-            .tz_localize("America/New_York")
-            .normalize()
-            .replace(hour=close_et.hour, minute=close_et.minute)
-        )
-    else:
-        end_close_et = asof_index_et.max()
-
-    # Keep only trading closes up to end_close_et
-    asof_index_et = asof_index_et[asof_index_et <= end_close_et]
-    if asof_index_et.empty:
-        raise ValueError("No available trading closes <= end_date_et.")
-
-    # Take last N available trading days
-    asof_dates_et = asof_index_et[-backfill_bdays:]
-    # =============================================================================
-    # 4) Prepare models
-    # =============================================================================
-    model_specs = step_cfg.get("models", []) or []
-    enabled_specs = [m for m in model_specs if m.get("enabled", True)]
-    if not enabled_specs:
-        raise ValueError("No enabled models found in step_cfg['models'].")
-
-    factory_data_cfg = {"returns_col": "ret", "realized_var_col": "rv"}
-
-    rows: list[dict[str, object]] = []
-
-
-    # =============================================================================
-    # 5) Walk-forward loop
-    # =============================================================================
-    for asof_close_et in asof_dates_et:
-        # Assume next_business_day_et returns the date so manually make it close 
-        forecast_close_et = (
-                        next_trading_day_et(asof_close_et)
-                        + pd.Timedelta(hours=16)
-                    )
-        
-        if forecast_close_et is None:
-            continue
-
-        asof_close_utc = asof_close_et.tz_convert("UTC")
-        forecast_close_utc = forecast_close_et.tz_convert("UTC") 
-    
-
-        # train data through as-of close (compare in UTC)
-        df_asof = df[df.index <= asof_close_utc]
-        train_df = apply_train_window(df_asof, step_cfg)
-
-        base = {
-            "run_id": run_id,
-            "asof_date_et": asof_close_et.normalize(),         # ET date label
-            "forecast_date_et": forecast_close_et.normalize(), # ET date label
-            "asof_close_utc": pd.Timestamp(asof_close_utc),
-            "forecast_close_utc": pd.Timestamp(forecast_close_utc),
-        }
-
-    
-        for spec in enabled_specs:
-            model = model_factory(spec, factory_data_cfg)
-            model.fit(train_df)
-
-            fc = model.forecast(train_df)
-            if not isinstance(fc, pd.Series):
-                raise TypeError(f"{model.name}.forecast must return pd.Series, got {type(fc)}.")
-            if len(fc) != 1:
-                raise ValueError(f"{model.name}.forecast must return exactly 1 value; got {len(fc)}.")
-
-            var_hat = float(fc.iloc[0])
-            if not np.isfinite(var_hat) or var_hat <= 0:
-                print(train_df)
-                raise ValueError(f"{model.name} produced invalid variance forecast: {var_hat}")
-
-            model_id = spec.get("name") or model.name
-
-
-            
-            rows.append({**base, "model": model_id, "predicted_value": var_hat})
-
-
-    results = (
-        pd.DataFrame(rows)
-        .sort_values(by=["forecast_close_utc", "model"])
-        .set_index("forecast_close_utc")
-        .sort_index()
+    df = load_and_standardize_modeling_table(
+        storage=storage,
+        in_key=in_key,
+        returns_col=returns_col,
+        rv_col=rv_col,
     )
 
-    merged = add_forecasted_regime_from_gold(
-        preds=results,
-        gold=df_asof,        # has column "rv" after renaming
-        realized_col="rv",
+    # Expectation: df.index is a UTC DatetimeIndex (your pipeline uses ET-close stamped in UTC)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise TypeError("Expected df.index to be a DatetimeIndex.")
+    if df.index.tz is None:
+        # If your table is UTC but tz-naive, force it (adjust if your actual semantics differ)
+        df = df.copy()
+        df.index = df.index.tz_localize("UTC")
+
+    df = df.sort_index()
+
+    # Resolve "current" as-of close so we don't backfill past what exists / what is considered available
+    _, current_asof_close_utc, _, _ = resolve_prediction_times(
+        now_utc=datetime.now(timezone.utc),
+        close_et=close_et,
+    )
+    current_asof_close_utc = pd.Timestamp(current_asof_close_utc)
+
+    # Choose walk-forward anchor timestamps from the data itself
+    asof_closes_utc = df.index.unique().sort_values()
+    asof_closes_utc = asof_closes_utc[asof_closes_utc <= current_asof_close_utc]
+
+    if len(asof_closes_utc) == 0:
+        return pd.DataFrame()
+
+    asof_closes_utc = asof_closes_utc[-backfill_bdays:]
+
+    results = manual_walk_forward(
+        df,
+        asof_closes_utc,
+        step_cfg=step_cfg,
+        close_et=close_et,
+        run_id=run_id,
     )
 
-    storage.write_parquet(merged, store_key)
+    if results is None or len(results) == 0:
+        return pd.DataFrame()
 
-    return merged
+    merge_and_persist_predictions(
+        storage=storage,
+        store_key=store_key,
+        results=results,
+    )
+
+    return results
 
 
 def main() -> None:

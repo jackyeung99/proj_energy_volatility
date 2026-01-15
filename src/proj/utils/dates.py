@@ -144,18 +144,35 @@ def next_business_day_et(day_et: pd.Timestamp) -> pd.Timestamp:
 # -----------------------
 # ET close <-> UTC identity timestamps
 # -----------------------
-def et_close_ts_utc(day_et: pd.Timestamp, close_et: time = time(16, 0)) -> pd.Timestamp:
+def et_close_ts_utc(
+    day_et: pd.Timestamp,
+    close_et: time = time(16, 0),
+) -> pd.Timestamp:
     """
     Return the UTC timestamp corresponding to ET market close on the ET calendar day.
 
     This is the recommended daily identity key for both gold and forecast targets.
     DST-safe (because we localize to America/New_York then convert to UTC).
     """
-    day_et = pd.Timestamp(day_et).normalize()
-    ts_et = (
-        day_et.tz_localize(ET)
-        .replace(hour=close_et.hour, minute=close_et.minute, second=0, microsecond=0)
+    ts = pd.Timestamp(day_et)
+
+    # Ensure ET timezone correctly
+    if ts.tzinfo is None:
+        ts_et = ts.tz_localize(ET)
+    else:
+        ts_et = ts.tz_convert(ET)
+
+    # Normalize AFTER we're safely in ET
+    ts_et = ts_et.normalize()
+
+    # Set close time
+    ts_et = ts_et.replace(
+        hour=close_et.hour,
+        minute=close_et.minute,
+        second=0,
+        microsecond=0,
     )
+
     return ts_et.tz_convert("UTC")
 
 
