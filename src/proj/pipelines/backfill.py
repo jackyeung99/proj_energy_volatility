@@ -164,7 +164,7 @@ def predict_backfill(
     for asof_close_et in asof_dates_et:
         # Assume next_business_day_et returns the date so manually make it close 
         forecast_close_et = (
-                        next_business_day_et(asof_close_et)
+                        next_trading_day_et(asof_close_et)
                         + pd.Timedelta(hours=16)
                     )
         

@@ -232,7 +232,7 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
     asof_close_utc = et_close_ts_utc(asof_date_et, close_et=close_et)
 
     # Forecast trading day label (ET) + forecast close timestamp (UTC) [JOIN KEY]
-    forecast_date_et = next_business_day_et(asof_date_et)
+    forecast_date_et = next_trading_day_et(asof_date_et)
     forecast_close_utc = et_close_ts_utc(forecast_date_et, close_et=close_et)
 
     # =============================================================================

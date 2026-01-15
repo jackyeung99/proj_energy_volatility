@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import pandas as pd
+import pandas_market_calendars as mcal
 
+
+# Pick the exchange calendar you want:
+# - "NYSE" is usually right for US equities/ETFs
+# - other options exist in pandas_market_calendars
+_CAL = mcal.get_calendar("NYSE")
 ET = ZoneInfo("America/New_York")
 
 
@@ -44,6 +50,75 @@ def ensure_datetime_index_utc(df: pd.DataFrame, *, allow_naive: bool = True) -> 
 # -----------------------
 # Trading-day logic (weekday-only)
 # -----------------------
+
+
+
+def _to_et_midnight(day_et: pd.Timestamp) -> pd.Timestamp:
+    """
+    Normalize to ET midnight and ensure tz-aware America/New_York.
+    Accepts tz-naive (assumed ET) or tz-aware timestamps.
+    """
+    ts = pd.Timestamp(day_et)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("America/New_York")
+    else:
+        ts = ts.tz_convert("America/New_York")
+    return ts.normalize()
+
+
+def is_trading_day_et(day_et: pd.Timestamp) -> bool:
+    """True if the date is an exchange trading day (skips weekends + holidays)."""
+    d = _to_et_midnight(day_et)
+    sched = _CAL.schedule(start_date=d.date(), end_date=d.date())
+    return not sched.empty
+
+
+def prev_trading_day_et(day_et: pd.Timestamp) -> pd.Timestamp:
+    """Previous exchange trading day label in ET (midnight ET)."""
+    d = _to_et_midnight(day_et)
+
+    # Look back far enough to cover long holiday stretches
+    start = (d - pd.Timedelta(days=14)).date()
+    end = d.date()
+
+    sched = _CAL.schedule(start_date=start, end_date=end)
+    if sched.empty:
+        raise ValueError("No trading days found in lookback window; increase the lookback.")
+
+    # schedule index is trading sessions (dates)
+    sessions = pd.DatetimeIndex(sched.index).tz_localize("America/New_York").normalize()
+
+    # If d itself is a trading day, "previous" means strictly before d
+    prev_sessions = sessions[sessions < d.normalize()]
+    if len(prev_sessions) == 0:
+        # extend lookback if needed
+        return prev_trading_day_et(d - pd.Timedelta(days=1))
+
+    return prev_sessions[-1]
+
+
+def next_trading_day_et(day_et: pd.Timestamp) -> pd.Timestamp:
+    """Next exchange trading day label in ET (midnight ET)."""
+    d = _to_et_midnight(day_et)
+
+    start = d.date()
+    end = (d + pd.Timedelta(days=14)).date()
+
+    sched = _CAL.schedule(start_date=start, end_date=end)
+    if sched.empty:
+        raise ValueError("No trading days found in lookahead window; increase the lookahead.")
+
+    sessions = pd.DatetimeIndex(sched.index).tz_localize("America/New_York").normalize()
+
+    # "next" means strictly after d
+    next_sessions = sessions[sessions > d.normalize()]
+    if len(next_sessions) == 0:
+        # extend lookahead if needed
+        return next_trading_day_et(d + pd.Timedelta(days=1))
+
+    return next_sessions[0]
+
+
 def is_business_day_et(day_et: pd.Timestamp) -> bool:
     """Weekday-only business day check (Mon-Fri)."""
     d = pd.Timestamp(day_et).normalize()

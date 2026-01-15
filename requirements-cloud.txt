@@ -4,6 +4,7 @@ numpy
 openmeteo_requests
 pandas
 pandas_datareader
+pandas_market_calendars
 requests
 retry_requests
 s3fs
