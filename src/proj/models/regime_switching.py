@@ -73,7 +73,7 @@ def build_regime_table(
 def fit_markov_regime_model(
     y: pd.Series,
     k_states: int = 3,
-    switching_variance: bool = True,
+    switching_variance: bool = False,
     trend: str = "c",
     em_iter: int = 10,
     maxiter: int = 200,
