@@ -19,7 +19,7 @@ from proj.data.storage import make_storage
 
 
 from proj.pipelines.steps.scoring import score_predictions
-
+from proj.data.merge_helpers import merge_and_dedup_long
 from proj.pipelines.steps._predict_utils import (
     parse_predict_cfg,
     apply_train_window,
@@ -56,7 +56,7 @@ def manual_walk_forward(
     enabled_specs = get_enabled_model_specs(step_cfg)
 
     out = []
-    asof_closes_utc = pd.DatetimeIndex(pd.to_datetime(asof_closes_utc, utc=True)).sort_values()
+    asof_closes_utc = pd.DatetimeIndex(pd.to_datetime(asof_closes_utc, utc=True)).sort_values()[:-1]
 
     for asof_close_utc in asof_closes_utc:
         # Use the as-of close as "now" for consistent walk-forward timing logic
@@ -86,6 +86,7 @@ def manual_walk_forward(
             base_row=base_row,
         )
 
+      
         if preds is None or len(preds) == 0:
             continue
 
@@ -95,7 +96,7 @@ def manual_walk_forward(
         # Return empty frame with no crash, caller can handle
         return pd.DataFrame()
 
-    return pd.concat(out, ignore_index=True)
+    return pd.concat(out, ignore_index=False)
 
 
 def predict_backfill(
@@ -156,12 +157,7 @@ def predict_backfill(
     if results is None or len(results) == 0:
         return pd.DataFrame()
 
-    merge_and_persist_predictions(
-        storage=storage,
-        store_key=store_key,
-        results=results,
-    )
-
+    storage.write_parquet(results, store_key)
     return results
 
 

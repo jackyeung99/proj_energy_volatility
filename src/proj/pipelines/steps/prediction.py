@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from proj.utils.dates import utc_run_id
+from proj.data.merge_helpers import merge_and_dedup_long
 
 logger = logging.getLogger("proj.prediction")
 
@@ -59,11 +60,20 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
         base_row=base_row,
     )
 
+    
+    if storage.exists(store_key):
+        old_df = storage.read_parquet(store_key)
+        merged = merge_and_dedup_long(old_df, results, "model")
+    else:
+        merged = results
+
     merge_and_persist_predictions(
         storage=storage,
         store_key=store_key,
         results=results,
     )
+    storage.write_parquet(merged, store_key)
+
     logger.info("Wrote prediction table with %d rows to %s", len(results), store_key)
 
 

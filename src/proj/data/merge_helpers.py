@@ -219,15 +219,22 @@ def merge_and_dedup_long(
         raise ValueError(f"merge_and_dedup_long: missing required column '{long_col}'")
 
     # Normalize index to tz-aware UTC
+
     out = out.copy()
-    out.index = pd.to_datetime(out.index, utc=True, errors="coerce")
-    out = out.loc[~out.index.isna()]
     out[long_col] = out[long_col].astype(str)
 
-    # dedup on (time index, model)
-    tmp = out.reset_index(names="ts")
-    tmp = tmp.drop_duplicates(subset=["ts", long_col], keep=keep)
+    # build composite key from (index, long_col)
+    key = pd.MultiIndex.from_arrays(
+        [out.index, out[long_col].to_numpy()],
+        names=["ts", long_col],
+    )
 
-    tmp = tmp.sort_values(["ts", long_col])
-    tmp = tmp.set_index("ts")
+    # boolean mask (numpy, no alignment issues)
+    mask = ~key.duplicated(keep=keep)
+
+    tmp = out.iloc[mask]
+
+    # deterministic ordering
+    tmp = tmp.sort_index().sort_values(long_col)
+
     return tmp

@@ -145,6 +145,7 @@ def forecast_models(
         .set_index("forecast_close_utc")
         .sort_index()
     )
+
     return out
 
 
