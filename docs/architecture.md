@@ -1,231 +1,242 @@
 # Cloud Architecture Overview
 
-This document describes the end-to-end architecture for the Energy Volatility Modeling project.  
-The system is designed to support **incremental data ingestion**, **batch time-series modeling**, **automated retraining and forecasting**, and **business intelligence visualization**, while remaining flexible for experimentation and scalable to cloud deployment.
+This document describes the end-to-end cloud architecture for the Energy Volatility Forecasting project.
+The system supports incremental ingestion, feature building, automatic model fitting and retraining,
+daily (business-day) forecasting, and BI reporting through an S3 → Glue → Athena → Power BI stack.
 
 ---
 
 ## 1. Design Principles
 
-The architecture is guided by the following principles:
+1. Batch-first, scheduled execution  
+   Forecasts are generated on a defined cadence (business-day / daily). No real-time API is required.
 
-1. **Batch-first, not API-first**  
-   Forecasts are generated on a scheduled basis and written to storage. No real-time inference is required.
+2. S3 as the system of record  
+   All curated datasets, engineered features, predictions, and evaluation outputs are stored in S3.
 
-2. **S3 as the system of record**  
-   All curated data, features, model artifacts, and predictions are stored in object storage.
+3. Auto-fit and reproducibility  
+   Models are fit automatically from config and data, but every run is traceable via run metadata,
+   partitions, and artifacts.
 
-3. **Separation of concerns**  
-   Data ingestion, feature engineering, modeling, and evaluation are implemented as independent pipeline stages.
+4. Separation of concerns  
+   Ingestion, feature engineering, model training, inference, and scoring are modular pipeline stages.
 
-4. **Config-driven experimentation**  
-   Model behavior is controlled through configuration files rather than code changes.
-
-5. **Reproducibility over optimization**  
-   Each run can be traced to specific data partitions, model parameters, and code versions.
+5. Query-first analytics  
+   Downstream reporting is driven by Athena SQL over S3, with schema managed by AWS Glue.
 
 ---
 
 ## 2. High-Level Architecture
 
-The system consists of four major layers:
-
-1. **Data Sources**
-2. **Data & Modeling Pipelines**
-3. **Storage Layer**
-4. **Analytics & Visualization**
+### Major Layers
+1. Data Sources  
+2. Containerized Pipeline (Batch Compute)  
+3. S3 Data Lake + Artifacts  
+4. Glue Catalog + Athena Query Layer  
+5. Power BI Dashboards  
 
 ### High-Level Flow
 
-External APIs
-↓
-Data Ingestion Pipeline
-↓
-Curated Weekly Dataset (S3)
-↓
-Feature Engineering Pipeline
-↓
-Model Training & Prediction
-↓
-Predictions Dataset (S3)
-↓
-Power BI Dashboard
-
+External APIs / Data Feeds  
+↓  
+Scheduled Container Job (ECS Fargate via EventBridge)  
+- Incremental ingest  
+- Feature engineering  
+- Auto-fit / retrain (configurable)  
+- Forecast + scoring  
+↓  
+S3 Data Lake (Parquet, partitioned)  
+↓  
+Glue Crawler / Catalog Updates  
+↓  
+Athena Views / Queries  
+↓  
+Power BI (ODBC / Athena connector)
 
 ---
 
 ## 3. Data Sources
 
-The project integrates multiple external data sources, including:
+The pipeline integrates multiple domains:
 
-- Financial market data (energy equities, returns, volatility)
-- Macroeconomic indicators (e.g., FRED series)
-- Weather and climate variables (temperature, precipitation, wind shocks)
-- Static reference datasets (e.g., plant or energy infrastructure data)
+- Market data (prices, returns, realized variance / realized volatility)
+- Macroeconomic series (e.g., FRED: rates, spreads, volatility indices)
+- Weather and climate signals (anomalies, shocks, derived indicators)
+- Static reference datasets (optional)
 
-All sources are normalized to a **weekly frequency** with a shared time index (`week_end`).
+All sources are normalized to a shared time index, typically daily business-day.
 
 ---
 
-## 4. Data Ingestion Layer
+## 4. Ingestion Layer
 
 ### Purpose
-The ingestion layer retrieves new data incrementally, processes it into a canonical schema, validates it, and persists it to cloud storage.
+Incrementally fetch new data since the last successful run, standardize schemas,
+and write append-only partitions.
 
 ### Responsibilities
-- Determine the last successfully ingested date
-- Pull only new observations since that date
-- Clean and standardize source-specific formats
-- Merge data from multiple sources
-- Validate time-series integrity
-- Write curated datasets to storage
+- Track last ingested timestamp per source
+- Pull only missing increments (idempotent re-runs)
+- Standardize timezones, indices, and column naming
+- Validate continuity and missingness rules
+- Write outputs to S3 as partitioned Parquet
 
-### Output
-- A single **curated weekly dataset** containing all inputs required for modeling
-
-### Key Properties
-- Incremental (supports weekly updates)
-- Idempotent (safe to re-run)
-- Source-agnostic (each data source is isolated)
+### Outputs
+- Curated modeling inputs stored in S3 (gold layer)
 
 ---
 
 ## 5. Feature Engineering Layer
 
 ### Purpose
-Transform curated data into model-ready features while remaining flexible for experimentation.
+Create model-ready feature matrices and derived signals consistently across runs.
 
 ### Responsibilities
-- Construct lagged variables
-- Apply transformations and scaling
-- Select feature subsets based on experiment configuration
-- Drop invalid observations created by lagging
-
-### Output
-- A **features dataset** that matches the exact input expected by the model
-
-### Design Choice
-Feature construction is **experiment-specific**.  
-The curated dataset is never modified to suit a particular model.
-
----
-
-## 6. Modeling Layer
-
-### Purpose
-Estimate time-series models and generate forecasts.
-
-### Supported Models
-- ARIMA
-- GARCH
-- GARCH-X
-- Gradient-boosted models (XGBoost) for comparison
-
-### Training Strategy
-- Batch retraining on a fixed schedule (e.g., weekly)
-- Expanding or rolling windows, configurable
-- Parameters are re-estimated via maximum likelihood (not online learning)
+- Build lags, rolling windows, and transforms
+- Construct cross-domain features (market, macro, weather)
+- Enforce look-ahead safety
+- Align targets with as-of timestamps
+- Materialize feature sets by experiment configuration
 
 ### Outputs
-- Serialized model artifacts
-- Model metadata (training window, feature set, parameters)
-
-Artifacts are written to cloud storage and versioned by training date.
+- Feature datasets partitioned by run_id and as-of date
 
 ---
 
-## 7. Prediction Layer
+## 6. Modeling Layer (Auto-Fit / Auto-Train)
 
 ### Purpose
-Generate forward-looking forecasts using the most recent trained model.
+Automatically fit volatility models based on configuration and available data.
+
+### Supported Models
+- EWMA baselines
+- GARCH and GARCH-X variants
+- HAR-RV style regressions
+- ML benchmarks (e.g., gradient-boosted models)
+- Future extensions: regime-switching models
+
+### Training Strategy
+- Scheduled or conditional retraining
+- Rolling or expanding training windows
+- Model-specific estimation methods (e.g., MLE)
+
+### Outputs
+- Serialized model artifacts in S3
+- Training metadata and diagnostics
+- Versioned by run_id and training cutoff date
+
+---
+
+## 7. Prediction and Scoring Layer
+
+### Purpose
+Generate forecasts and evaluation metrics in the same pipeline run.
 
 ### Responsibilities
 - Load latest model artifacts
-- Read most recent feature data
-- Produce forecasts for a specified horizon
-- Write predictions with timestamps and identifiers
+- Produce forward forecasts for the configured horizon
+- Join predictions with realized outcomes when available
+- Compute metrics such as QLIKE and RMSE
+- Generate regime labels or percentiles if configured
 
-### Output
-- A **predictions dataset** containing forecasts and metadata
-
-Predictions are partitioned by run date to support historical analysis and backtesting.
+### Outputs
+- predictions/ : point forecasts and metadata
+- aggregates/  : scored results and rolling performance summaries
 
 ---
 
-## 8. Storage Layer
+## 8. Storage Layer (S3 Data Lake)
 
 ### Primary Storage
-- **Amazon S3**
+- Amazon S3
 
 ### Logical Layout
-- `curated/` — cleaned, merged weekly inputs
-- `features/` — model-ready feature matrices
-- `models/` — trained model artifacts
-- `predictions/` — forecast outputs
+- bronze/       raw ingested data (optional)
+- silver/       standardized tables (optional)
+- gold/         curated modeling dataset
+- features/     model-ready feature matrices
+- models/       serialized model artifacts
+- predictions/  forecast outputs
+- aggregates/   evaluation metrics and rollups
+- athena_results/ query outputs
 
-### Rationale
-- Cheap and durable storage
-- Natural fit for partitioned time-series data
-- Directly queryable via analytics tools (Athena, Power BI)
-
-S3 is treated as the **single source of truth**.
+S3 is treated as the single source of truth.
 
 ---
 
-## 9. Orchestration & Automation
+## 9. Orchestration and Automation
 
 ### Scheduling
-- A weekly schedule triggers the entire pipeline.
+- EventBridge triggers the pipeline on a business-day cadence.
 
 ### Execution
-- A single containerized batch job runs:
-  1. Data ingestion
+- A single ECS Fargate container runs:
+  1. Ingestion
   2. Feature engineering
-  3. Model training (optional per run)
+  3. Model fitting or retraining
   4. Prediction
+  5. Scoring and aggregation
+  6. State update and persistence
 
-### Logging & Monitoring
-- All pipeline steps emit logs
-- Failures halt execution and prevent state updates
-
-This design minimizes operational complexity while remaining extensible.
+### Observability
+- Centralized logging
+- Fail-fast execution
+- Run-level traceability via run_id
 
 ---
 
-## 10. Visualization Layer (Power BI)
+## 10. Glue and Athena Query Layer
+
+### Purpose
+Expose S3 datasets for analytics and BI consumption.
+
+### Components
+- AWS Glue Data Catalog for schema and partitions
+- Glue Crawlers or managed table definitions
+- Athena SQL for querying and view creation
+
+### BI-Oriented Outputs
+- dashboard_fact view (predictions + realized + regimes)
+- model_performance view (rolling metrics by model)
+- data_freshness view (last successful run and coverage)
+
+---
+
+## 11. Visualization Layer (Power BI)
 
 ### Data Access
-Power BI reads forecast and historical data from:
-- Cloud storage via a query layer (e.g., Athena), or
-- A lightweight serving database populated from S3 (optional)
+Power BI connects to Athena using the ODBC or native connector.
 
 ### Dashboard Focus
-- Forecasted volatility and returns
-- Model performance metrics
-- Temporal comparisons and regime changes
-- Data freshness indicators
+- Latest volatility forecasts
+- Historical forecast vs realized comparison
+- Model-level performance trends
+- Regime and percentile indicators
+- Data freshness and operational status
 
-The dashboard is **read-only** and does not interact with the pipeline.
-
----
-
-## 11. Experimentation & Extensibility
-
-The architecture supports experimentation by design:
-
-- New models can be added without changing ingestion logic
-- Feature sets are selected via configuration
-- Multiple experiments can coexist using versioned outputs
-- Historical runs remain reproducible
-
-Future extensions may include:
-- Additional data sources
-- Model ensembles
-- Regime-switching models
-- Real-time inference endpoints (if needed)
+The dashboard is read-only and does not trigger compute.
 
 ---
 
-## 12. Summary
+## 12. Experimentation and Extensibility
 
-This architecture provides a clear, modular, and scalable framework for deploying time-series volatility models in the cloud. It balances engineering discipline with research flexibility and is well-suited for both academic exploration and production-style workflows.
+- New models can be added via configuration
+- Feature sets are experiment-specific
+- Multiple runs and model variants coexist via partitioning
+- Historical forecasts remain fully reproducible
+
+Planned extensions include regime-switching models,
+forecast ensembles, and enhanced monitoring.
+
+---
+
+## 13. Summary
+
+This architecture provides a production-style batch system for volatility forecasting:
+
+- Compute: ECS Fargate (scheduled batch jobs)
+- Storage: S3 data lake (partitioned Parquet)
+- Query: Glue Data Catalog + Athena
+- Visualization: Power BI over Athena views
+
+It balances research flexibility with operational robustness.
