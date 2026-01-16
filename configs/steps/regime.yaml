@@ -1,0 +1,43 @@
+files:
+  data_dir:  gold/modeling_table.parquet
+  output_dir: regimes/regimes.parquet
+
+
+regime:
+  # Observable used for regime inference
+  observable:
+    column: rv_xle                  # realized variance column in gold
+    transform: log              # log(rv + eps)
+    eps: 1.0e-12
+
+  # Markov model specification
+  markov:
+    k_states: 3                 # Low / Medium / High
+    switching_variance: true
+    trend: c
+    em_iter: 10
+    maxiter: 200
+
+  # Estimation window
+  fit_window:
+    mode: expanding             # expanding or rolling
+    min_obs: 250                # minimum required to fit
+    rolling_days: 1260          # only used if mode == rolling
+
+  # Output controls
+  output:
+    include_filtered_probs: true
+    include_next_state_probs: true
+    include_state_label: true
+    include_confidence: true
+    confidence_def: max_prob    # max(p_state_k)
+
+  # Labeling rules (for dashboard stability)
+  labeling:
+    method: mean_order          # label states by mean volatility
+    labels:
+      2: ["Low", "High"]
+      3: ["Low", "Medium", "High"]
+
+  # Persistence
+  write_mode: overwrite         # overwrite full table each run

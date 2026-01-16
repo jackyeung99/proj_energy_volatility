@@ -1,11 +1,13 @@
 # src/proj/pipelines/predict.py
 from __future__ import annotations
-
+import logging
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
 from proj.utils.dates import utc_run_id
+
+logger = logging.getLogger("proj.prediction")
 
 from proj.pipelines.steps._predict_utils import (
     parse_predict_cfg,
@@ -62,5 +64,7 @@ def predict_next(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame:
         store_key=store_key,
         results=results,
     )
+    logger.info("Wrote prediction table with %d rows to %s", len(results), store_key)
+
 
     return results

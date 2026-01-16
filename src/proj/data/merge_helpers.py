@@ -187,8 +187,6 @@ def merge_and_dedup(
 
     return merged
 
-import pandas as pd
-
 def merge_and_dedup_long(
     old_df: pd.DataFrame,
     new_df: pd.DataFrame,

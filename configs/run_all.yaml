@@ -4,16 +4,20 @@ storage:
 
 steps:
   ingestion:
-    enabled: true
+    enabled: false
     config: steps/ingest.yaml
 
   features:
-    enabled: true
+    enabled: false
     config: steps/build_features.yaml
 
   merge:
-    enabled: true
+    enabled: false
     config: steps/merge.yaml
+
+  regime:
+    enabled: true 
+    config: steps/regime.yaml
 
   prediction:
     enabled: true

@@ -13,6 +13,7 @@ from proj.data.storage import make_storage
 from proj.pipelines.steps.ingestion import ingest
 from proj.pipelines.steps.merge import merge_data
 from proj.pipelines.steps.build_features import construct_features
+from proj.pipelines.steps.regime import regime
 from proj.pipelines.steps.prediction import predict_next
 from proj.pipelines.steps.scoring import score_predictions
 
@@ -21,6 +22,7 @@ STEP_DISPATCH = {
     "ingestion": ingest,
     "features": construct_features,
     "merge": merge_data,
+    "regime": regime,
     "prediction": predict_next,
     "scoring": score_predictions, 
 }

@@ -105,6 +105,10 @@ def score_predictions(storage, global_cfg: dict, step_cfg: dict) -> pd.DataFrame
         "monthly_rolling_avg_qlike",
     ]].sort_values(["forecasted_date", "model"]).reset_index(drop=True)
 
+
+
     storage.write_parquet(out, out_path)
+    logger.info("Recomputed aggregate table with %d rows to %s", len(out), out_path)
+    
     return out
             

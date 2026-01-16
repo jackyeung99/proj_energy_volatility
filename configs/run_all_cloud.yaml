@@ -16,6 +16,10 @@ steps:
   merge:
     enabled: true
     config: steps/merge.yaml
+
+  regime:
+    enabled: true 
+    config: steps/regime.yaml
     
   prediction:
     enabled: true
