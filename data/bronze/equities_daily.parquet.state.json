@@ -1,10 +1,10 @@
 {
   "config_fingerprint": "2feafc1884938040ea59b43fd27d137ce01d87eea7edc491454a3f380f40e65d",
-  "dataset_end": "2026-01-15T00:00:00+00:00",
+  "dataset_end": "2026-01-16T00:00:00+00:00",
   "dataset_start": "2021-01-04T00:00:00+00:00",
-  "last_success_utc": "2026-01-16T00:32:26.621333+00:00",
-  "pull_end": "2026-01-16T00:32:25.843742+00:00",
-  "pull_start": "2026-01-14T00:00:00+00:00",
+  "last_success_utc": "2026-01-17T04:44:50.507795+00:00",
+  "pull_end": "2026-01-17T04:44:49.784892+00:00",
+  "pull_start": "2026-01-15T00:00:00+00:00",
   "rows_written": 2,
   "store_key": "bronze/equities_daily.parquet"
 }

@@ -1,10 +1,10 @@
 {
   "config_fingerprint": "7ce872a8ee9f9a4b21a655026e24780d473e3d56111926954dba7bbf574746aa",
-  "dataset_end": "2026-01-16T00:00:00+00:00",
+  "dataset_end": "2026-01-17T00:00:00+00:00",
   "dataset_start": "2021-01-01T00:00:00+00:00",
-  "last_success_utc": "2026-01-16T00:32:31.403940+00:00",
-  "pull_end": "2026-01-16T00:32:30.834472+00:00",
-  "pull_start": "2026-01-15T00:00:00+00:00",
+  "last_success_utc": "2026-01-17T04:44:52.097148+00:00",
+  "pull_end": "2026-01-17T04:44:51.506765+00:00",
+  "pull_start": "2026-01-16T00:00:00+00:00",
   "rows_written": 2,
   "store_key": "bronze/weather.parquet"
 }

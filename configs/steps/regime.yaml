@@ -13,7 +13,7 @@ regime:
   # Markov model specification
   markov:
     k_states: 3                 # Low / Medium / High
-    switching_variance: false
+    switching_variance: true
     trend: c
     em_iter: 10
     maxiter: 200
