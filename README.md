@@ -43,13 +43,16 @@ This project is designed to study and model these dynamics in a **statistically 
 │ ├── ingest.yaml # Data ingestion settings
 │ ├── merge.yaml # Dataset alignment and joins
 │ ├── build_features.yaml # Feature engineering
+| ├── regime.yaml # markov regime 
 │ └── prediction.yaml # Training and inference
 │
 ├── data/
 │ ├── bronze/ # Raw ingested data + ingestion state
 │ ├── silver/ # Cleaned and standardized datasets
 │ ├── gold/ # Model-ready tables
-│ ├── results/ # Forecasts and evaluation outputs
+| ├── regimes/ #table of latent regime 
+│ ├── prediction/ # Forecasts
+| ├── aggregates/ # scored forecasts 
 │ └── external/ # Static reference data
 │
 ├── docs/
