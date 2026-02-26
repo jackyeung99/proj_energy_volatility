@@ -1,5 +1,4 @@
 # Energy Volatility Forecasting System  
-**Author: Jack Yeung**
 
 
 ## Overview
